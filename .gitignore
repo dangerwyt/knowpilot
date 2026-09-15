@@ -85,6 +85,8 @@ backend/playground/*
 !backend/playground/t99_fixes_test.py
 # T99 前端实测：图标是否注册在"真正被挂载"的那个 app 实例上
 !backend/playground/t99_frontend_icon_test.js
+# T100 验收：compose 的 worker 必须 --pool=solo（配置层 + 自检 + 容器层实测）
+!backend/playground/t100_compose_worker_test.py
 
 # 迁移执行记录（记录的是「这个库跑过什么」，属本地状态）
 backend/migrations/APPLIED.log
