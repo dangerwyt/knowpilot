@@ -78,6 +78,9 @@ backend/playground/*
 !backend/playground/t89b_frontend_precheck_test.js
 # T98 验收：事件流第一条提示不冒用节点名（含判据自检，踩坑 #98）
 !backend/playground/t98_event_order_test.py
+# Celery worker 是否比代码新的核对工具（2026-09-15 从 .workbuddy/tmp 搬入，
+# 旧判据会被沙箱辅助进程骗出假 PASS）
+!backend/playground/check_worker_start.py
 
 # 迁移执行记录（记录的是「这个库跑过什么」，属本地状态）
 backend/migrations/APPLIED.log
