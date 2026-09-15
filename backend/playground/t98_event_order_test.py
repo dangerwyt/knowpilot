@@ -26,10 +26,14 @@
   cd backend
   PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe playground/t98_event_order_test.py
   ... --fast     # 用假图（跳过 LLM，几秒出结果），只验 _run 的事件转发顺序
+  ... --real     # **走真实链路**：HTTP 发任务 → Celery worker 执行 → 读 Redis 事件流
   ... --keep     # 保留造出来的任务/报告（默认跑完即清）
 
-注意：本脚本**进程内直调 `_run()`**，绕开 Celery worker —— 改了 `task_queue.py`
-不必等重启就能验逻辑。但它验的是逻辑，不是部署（部署层另看进程启动时间）。
+两种模式验的是**不同的层**（踩坑 #99，别混用）：
+  · 默认（进程内直调 `_run()`）：绕开 Celery worker —— 改了 `task_queue.py`
+    不必等重启就能验**逻辑**。但它验的是代码，不是部署。
+  · `--real`：真任务走 uvicorn → Celery → 落库。**这才是"部署层真的在用新代码"的直接证据。**
+    跑之前先 `check_worker_start.py` 确认 worker 比代码新，否则会拿旧代码得出"新代码有问题"的假结论。
 """
 from __future__ import annotations
 
@@ -38,7 +42,10 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from pathlib import Path
+
+import httpx
 
 BACKEND = Path(__file__).resolve().parents[1]   # .../knowpilot/backend
 sys.path.insert(0, str(BACKEND))
@@ -63,6 +70,13 @@ REAL_NODES = {"probe", "planner", "retriever", "synthesizer", "critic"}
 
 OBJECTIVE = "2026 年国内新能源汽车销量排名"   # 无资料目标，跑得快
 RUN_TIMEOUT = 420
+
+# --real 模式用（与 t86_e2e_task_test.py 同一套账号/端点）
+API = "http://localhost:8000/api/v1"
+EMAIL, PWD = "kptest@example.com", "test123456"
+TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+WAIT_LIMIT_S = 600
+POLL_S = 5
 
 
 def head(t: str) -> None:
@@ -185,6 +199,54 @@ async def cleanup(task_id: str) -> None:
     await redis_client.delete(f"task:stream:{task_id}")
 
 
+# --------------------------------------------------- --real：走真实链路（uvicorn + celery）
+
+def wait_terminal(client: httpx.Client, h: dict, task_id: str) -> dict:
+    """等任务到终态。超时/非终态一律抛错 —— 绝不把中途状态当结果返回。"""
+    t0 = time.time()
+    seen: list[str] = []
+    while time.time() - t0 < WAIT_LIMIT_S:
+        r = client.get(f"/tasks/{task_id}", headers=h)
+        r.raise_for_status()
+        t = r.json()
+        st = t["status"]
+        if not seen or seen[-1] != st:
+            seen.append(st)
+            print(f"    [{time.time() - t0:6.1f}s] status={st}")
+        if st in TERMINAL:
+            print(f"    终态 {st}（耗时 {time.time() - t0:.1f}s）")
+            return t
+        time.sleep(POLL_S)
+    raise TimeoutError(f"任务 {task_id} 等 {WAIT_LIMIT_S}s 仍未到终态（最后 {seen[-1] if seen else '?'}）")
+
+
+def real_send_task(project_id: str, kb_id: str) -> tuple[str, str]:
+    """HTTP 发一个真任务，等它跑完。返回 (task_id, 终态 status)。"""
+    with httpx.Client(base_url=API, timeout=60) as c:
+        r = c.post("/auth/login", json={"email": EMAIL, "password": PWD})
+        if r.status_code != 200:
+            raise RuntimeError(f"登录失败 HTTP {r.status_code}: {r.text[:150]}")
+        h = {"Authorization": f"Bearer {r.json()['token']}"}
+
+        # T54 的项目级唯一活跃任务约束：同项目有 pending/running 就发不进去
+        active = [t for t in c.get("/tasks", headers=h).json()
+                  if t["status"] in ("pending", "running")]
+        if active:
+            raise RuntimeError(f"同项目还有 {len(active)} 个进行中任务（T54 约束会挡住新任务）："
+                               f"{[t['id'][:8] for t in active]}")
+
+        r = c.post("/tasks", headers=h, json={
+            "project_id": project_id, "kb_ids": [kb_id],
+            "objective": OBJECTIVE, "title": "T98-事件顺序（真链路）",
+        })
+        if r.status_code != 201:
+            raise RuntimeError(f"创建任务失败 HTTP {r.status_code}: {r.text[:200]}")
+        task_id = r.json()["id"]
+        print(f"  真任务已发起 {task_id}（objective「{OBJECTIVE}」）")
+        t = wait_terminal(c, h, task_id)
+        return task_id, t["status"]
+
+
 class FakeGraph:
     """跳过 LLM 的假图，只用来快速验 _run 的事件转发顺序（--fast）。"""
 
@@ -197,8 +259,14 @@ class FakeGraph:
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fast", action="store_true", help="用假图（跳过 LLM，秒级）")
+    ap.add_argument("--real", action="store_true",
+                    help="走真实链路（HTTP → Celery worker → Redis），验的是部署层")
     ap.add_argument("--keep", action="store_true", help="保留造出来的任务（默认清理）")
     args = ap.parse_args()
+
+    if args.fast and args.real:
+        print("--fast 与 --real 互斥：前者用假图在进程内跑，后者必须是真任务")
+        return 2
 
     # ---------------- S1 判据自检（先做：判据不可信的话后面全白搭）
     head("S 组 · 判据自检（用改前的旧事件流喂给同一套判据）")
@@ -213,28 +281,42 @@ async def main() -> int:
            if caught else
            "判据**抓不到**旧行为：旧流下 O1/O3 竟然 PASS ⇒ 这两条判据是废的，下面的 PASS 不作数")
 
-    # ---------------- 真跑一个任务，看真实事件流
-    head("O 组 · 真事件流（进程内直调 _run，绕开 worker）")
-    project_id, kb_id = await pick_ctx()
-    task_id = await make_task(project_id, kb_id)
-    print(f"  造的任务 {task_id}（objective「{OBJECTIVE}」，kb {kb_id[:8]}）")
+    # ---------------- 跑一个任务，看真实事件流
+    if args.real:
+        head("O 组 · 真事件流（真实链路：uvicorn → Celery worker → Redis）")
+        project_id, kb_id = await pick_ctx()
+        try:
+            task_id, status = real_send_task(project_id, kb_id)
+        except Exception as e:
+            for cid in ("P1", "O1", "O2", "O3"):
+                record(cid, False, f"真任务没跑成：{type(e).__name__}: {e}")
+            return await _summary(None, keep=args.keep)
+        record("P1", status == "completed",
+               f"真任务跑到终态 {status}（completed 才说明图完整跑完、事件流是全的）"
+               if status == "completed" else
+               f"真任务终态是 {status}，图没跑完 ⇒ 事件流可能不全，O1-O3 不作数")
+    else:
+        head("O 组 · 真事件流（进程内直调 _run，绕开 worker）")
+        project_id, kb_id = await pick_ctx()
+        task_id = await make_task(project_id, kb_id)
+        print(f"  造的任务 {task_id}（objective「{OBJECTIVE}」，kb {kb_id[:8]}）")
 
-    if args.fast:
-        graph_mod.build_graph = lambda: FakeGraph()
-        print("  --fast：已把 build_graph 换成假图（不调 LLM）")
+        if args.fast:
+            graph_mod.build_graph = lambda: FakeGraph()
+            print("  --fast：已把 build_graph 换成假图（不调 LLM）")
 
-    try:
-        await asyncio.wait_for(tq._run(task_id), timeout=RUN_TIMEOUT)
-        print("  _run 跑完")
-    except asyncio.TimeoutError:
-        record("O1", False, f"_run 超过 {RUN_TIMEOUT}s 没跑完，事件流不完整")
-        record("O2", False, "见 O1")
-        record("O3", False, "见 O1")
-        return await _summary(task_id, keep=args.keep)
-    except Exception as e:
-        # --fast 的假图造不出完整 draft，收尾段会炸 —— 但事件早推完了，顺序照样能判
-        print(f"  _run 抛了 {type(e).__name__}: {e}")
-        print("  （收尾段失败不影响已推出的事件顺序，继续判）")
+        try:
+            await asyncio.wait_for(tq._run(task_id), timeout=RUN_TIMEOUT)
+            print("  _run 跑完")
+        except asyncio.TimeoutError:
+            record("O1", False, f"_run 超过 {RUN_TIMEOUT}s 没跑完，事件流不完整")
+            record("O2", False, "见 O1")
+            record("O3", False, "见 O1")
+            return await _summary(task_id, keep=args.keep)
+        except Exception as e:
+            # --fast 的假图造不出完整 draft，收尾段会炸 —— 但事件早推完了，顺序照样能判
+            print(f"  _run 抛了 {type(e).__name__}: {e}")
+            print("  （收尾段失败不影响已推出的事件顺序，继续判）")
 
     raw = await read_stream(task_id)
     evs = parse_events(raw)
@@ -253,7 +335,7 @@ async def main() -> int:
     return await _summary(task_id, keep=args.keep)
 
 
-async def _summary(task_id: str, keep: bool) -> int:
+async def _summary(task_id: str | None, keep: bool) -> int:
     head("汇总")
     for cid, tag, detail in RESULTS:
         print(f"  {tag} {cid}  {detail}")
@@ -261,7 +343,9 @@ async def _summary(task_id: str, keep: bool) -> int:
     n_fail = sum(1 for _, t, _ in RESULTS if t == "FAIL")
     print(f"\n  PASS={n_pass}  FAIL={n_fail}")
 
-    if keep:
+    if task_id is None:
+        print("  没有需要清理的任务")
+    elif keep:
         print(f"  --keep：任务 {task_id} 与它的报告保留在库里，需手工清理")
     else:
         await cleanup(task_id)
