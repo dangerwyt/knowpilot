@@ -1,0 +1,50 @@
+-- 0005 · T81：删除 chunks 死表（M1 骨架遗留，块数据实际存在 Milvus）
+--
+-- 目的：     chunks 是 M1 建库时的骨架表，设计意图是「关系库里也留一份块」，
+--            但实现从未写入过它 —— 分块与向量都落 Milvus（ingest.py → milvus_client.ingest_chunks），
+--            PG 这边只记 documents.chunk_count 这个计数。于是它建库至今 0 行、零引用。
+--            留着有三个害处：① 每个新人都会问「块到底存哪」，答案要多绕一层；
+--            ② 它的列（seq/content/metadata/milvus_id）暗示存在第二份真相，
+--            而真实真相只有 Milvus 一处；③ 将来若有人真往里写，就多出一份要同步的义务。
+-- 影响表：   chunks —— 整表删除（连同 chunks_pkey 与 chunks_document_id_fkey）。
+--            不影响其它任何表：实测 **0 张表**的外键指向它、无视图依赖、无触发器。
+--            块数据不受影响：KB 详情接口的 chunks 字段来自 Milvus
+--            （kb.py:160 → milvus_client.list_chunks_by_document）。
+-- 适用前提：**chunks 表必须为 0 行**（执行前先跑下面的自检 SELECT 确认）。
+--            若有行，说明块数据真的只存在 PG 里（Milvus 侧没有），本迁移会直接丢数据，
+--            必须先 dump 出来再决定 —— 不能拿它当「清理无用表」跑。
+-- 幂等性：   是（DROP TABLE IF EXISTS，可重复执行；表已不在时是空操作）。
+-- 执行：     cd backend && ./.venv/Scripts/python.exe migrations/apply.py 0005_t81_drop_chunks.sql
+--
+-- 执行前自检：
+--   SELECT count(*) FROM chunks;              -- 必须为 0
+--   SELECT conrelid::regclass FROM pg_constraint
+--     WHERE confrelid = to_regclass('public.chunks');   -- 必须 0 行（没人指向它）
+--
+-- 回滚：
+--   CREATE TABLE chunks (
+--       id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+--       document_id uuid NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+--       kb_id       uuid NOT NULL,
+--       seq         integer NOT NULL,
+--       content     text NOT NULL,
+--       metadata    jsonb NOT NULL,
+--       milvus_id   bigint,
+--       created_at  timestamptz NOT NULL DEFAULT now()
+--   );
+--   -- 注意 1：只恢复**空表结构**，数据不会回来（本来也没有数据）。
+--   -- 注意 2：上面的结构照 T81 执行前的现库反射结果写，与当时 models 里的 Chunk 模型
+--   --         有**一处刻意不同** —— 模型写的是 metadata JSONB default=dict，那是 Python 端
+--   --         默认值，库里并没有 server_default（本次实测 column_default 为空）。
+--   --         所以回滚 SQL 里 metadata 不能带 DEFAULT，否则恢复出来的结构 ≠ 原库。
+--   -- 注意 3：单跑这条 SQL 就够恢复结构（create_all 只建不存在的表、不会碰它）。
+--   --         若还要恢复 ORM 层，需把 models/__init__.py 的 Chunk 类一并加回，
+--   --         否则下次 schema_drift.py 会报「现库有、模型没有」。
+--
+-- 配套代码改动（与本迁移同一批发布，禁止只改一边）：
+--   - 删除：app/models/__init__.py 的 class Chunk（**真删，不要注释保留**）
+--   - 保留：app/schemas/__init__.py 的 ChunkOut、kb.py 的 list_chunks_by_document 调用
+--           —— 这两个走的是 Milvus，与本次删表无关，删了接口就空了
+--   - 改完必须跑 playground/schema_drift.py，要求**退出码 0**（模型 vs 现库零漂移）
+
+DROP TABLE IF EXISTS chunks;

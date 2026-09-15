@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+*.local
+
+# 环境与 IDE
+.env
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 运行时数据（用户上传的原文件，属本地状态，不进版本控制）
+backend/storage/
+
+# 前端构建产物（`vue-tsc -b` 生成，源文件是 vite.config.ts）
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# 验收工具目录：只收「被入库文件点名引用」的可复用工具，
+# 一次性探针/诊断脚本（t78_epoch_diag.py 等）和运行时产物（t78probe/）不入库。
+#
+# 两条写法注意（都实测踩过）：
+#   ① 必须用 playground/* 而不是 playground/。
+#      目录后带尾斜杠 = 整个目录被排除，下面的 ! 负向规则**穿不透**；
+#      写成 /* 排除的是「目录里的内容」，负向规则才能把指定文件捞回来。
+#   ② .gitignore **不支持行尾注释**。`# 说明` 只有写在行首才是注释，
+#      跟在规则后面会被当成规则内容的一部分，规则静默失效（无任何报错）。
+#      所以下面的说明一律单独占一行。
+backend/playground/*
+# 模型 vs 现库结构体检（migrations/README.md 的门禁步骤）
+!backend/playground/schema_drift.py
+# PG vs Milvus 数据漂移巡检
+!backend/playground/drift_check.py
+# 孤儿数据清理（Milvus 块 / storage 目录）
+!backend/playground/cleanup_orphans.py
+# Milvus 集合重建（同代次重复块收不掉时的兜底手段）
+!backend/playground/rebuild_vectors.py
+# 存量块代次刷新
+!backend/playground/reload_vectors.py
+# T82 验收：走 HTTP 让后端进程执行删除（沙箱内的 rmdir 语义不可信）
+!backend/playground/t82_real_env_test.py
+# T82 验收：沙箱感知版（命中改写时把相关判据标 SKIP 而非 FAIL）
+!backend/playground/t82_storage_cleanup_test.py
+
+# 迁移执行记录（记录的是「这个库跑过什么」，属本地状态）
+backend/migrations/APPLIED.log

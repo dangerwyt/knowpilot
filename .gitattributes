@@ -1,0 +1,24 @@
+# 换行符规范化。放在仓库里而不是依赖各人本机的 core.autocrlf ——
+# 那玩意儿默认值因安装方式而异，容易出「在我机器上没问题」。
+# 规则：仓库里统一存 LF，检出时按平台转换。
+* text=auto
+
+# 必须 LF 的：CRLF 会让 Linux/WSL 下的 shell 脚本报 `bad interpreter: /bin/bash^M`
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.dockerignore  text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# 二进制文件：不要做任何换行符转换
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.svg    text
+*.pdf    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.xlsx   binary
