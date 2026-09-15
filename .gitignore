@@ -60,6 +60,10 @@ backend/playground/*
 !backend/playground/t86_e2e_task_test.py
 # T87 验收：retriever 复用 probe「无资料」结论（静态比对 + 进程内直调）
 !backend/playground/t87_retriever_material_test.py
+# 仓库体检：提交前跑一遍（.gitignore 正反向 / 白名单 / 死引用 / 卫生）
+!backend/playground/t83_git_repo_check.py
+# LangGraph 静默丢弃未声明 state 键的最小复现（踩坑 #91 引用）
+!backend/playground/t87_langgraph_key_probe.py
 
 # 迁移执行记录（记录的是「这个库跑过什么」，属本地状态）
 backend/migrations/APPLIED.log
