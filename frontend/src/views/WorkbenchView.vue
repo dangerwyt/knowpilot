@@ -4,10 +4,10 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { streamTaskEvents } from "../api/sse";
 import { listKbs } from "@/api/kb";
-import { taskList, createTask } from "@/api/tasks";
+import { taskList, createTask, precheckTask } from "@/api/tasks";
 import type { IKb } from "@/typing/kb";
 import type { IWork } from "@/typing/work";
-import type { ITask, ITaskCreate } from "@/typing/tasks";
+import type { ITaskCreate } from "@/typing/tasks";
 
 const route = useRoute();
 const router = useRouter();
@@ -44,6 +44,30 @@ async function submit() {
 
     if (selectedKbs.value.length > 0) {
       payload.kb_ids = selectedKbs.value;
+    }
+
+    // 只在选了知识库时预检：没选 kb 就没有"资料够不够"这回事
+    if (payload.kb_ids?.length) {
+      const pre = await precheckTask({
+        objective: payload.objective,
+        kb_ids: payload.kb_ids,
+      });
+      if (pre.has_material === false) {
+        try {
+          await ElMessageBox.confirm(
+            `所选知识库未检索到与「${payload.objective}」相关的资料（0 条相关片段）。继续将仅凭模型知识撰写，报告可能缺少内部资料支撑。`,
+            "未找到相关资料",
+            {
+              confirmButtonText: "仍要继续",
+              cancelButtonText: "先去补资料",
+              type: "warning",
+            },
+          );
+        } catch (action) {
+          if (action === "cancel") router.push("/knowledge-bases");
+          return; // 取消按钮 / 右上角 X / ESC —— 都不发起
+        }
+      }
     }
 
     const task = await createTask(payload);
@@ -86,7 +110,8 @@ function listen(id: string) {
   stopStream = streamTaskEvents(id, {
     onEvent: (event, data) => {
       if (event === "agent_step") {
-        pushLog(`[${data.step}] ${data.detail || "…"}`, "primary");
+        const type = data.has_material === false ? "warning" : "primary";
+        pushLog(`[${data.step}] ${data.detail || "…"}`, type);
       } else if (event === "task_status") {
         // 订阅时补发的状态快照：去重（SSE 重连会重复收到）+ completed 时带 report_id 直接跳转
         const st = data.status as string;
@@ -234,31 +259,38 @@ onBeforeUnmount(() => stopStream?.());
   justify-content: space-between;
   border-bottom: 1px solid var(--el-border-color-light);
 }
+
 .brand {
   font-size: 18px;
   font-weight: 600;
 }
+
 .project-id {
   color: var(--el-text-color-secondary);
   font-size: 13px;
 }
+
 .main {
   max-width: 760px;
   margin: 0 auto;
   width: 100%;
 }
+
 .form-card {
   margin-bottom: 24px;
 }
+
 .form-actions {
   margin-top: 12px;
 }
+
 .log-line {
   display: flex;
   gap: 12px;
   padding: 4px 0;
   font-size: 13px;
 }
+
 .log-time {
   flex-shrink: 0;
   color: var(--el-text-color-secondary);

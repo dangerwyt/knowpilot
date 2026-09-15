@@ -4,6 +4,15 @@ export interface IQuality {
   score?: number | null;
   passed?: boolean | null;
   issues?: string[];
+  dimensions?: IDimensionScore[];
+  has_material?: boolean | null;
+  material_count?: number;
+}
+
+export interface IDimensionScore {
+  name: string;
+  score: number;
+  comment?: string;
 }
 
 export interface IReportSection {

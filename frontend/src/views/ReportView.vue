@@ -46,7 +46,8 @@ const groupedCitations = computed(() => {
     } else {
       const ex = map.get(key);
       if (!ex.sections.includes(c.section_id)) ex.sections.push(c.section_id);
-      if (c.snippet && !ex.snippets.includes(c.snippet)) ex.snippets.push(c.snippet);
+      if (c.snippet && !ex.snippets.includes(c.snippet))
+        ex.snippets.push(c.snippet);
     }
   }
   return [...map.values()];
@@ -82,7 +83,7 @@ const openSource = async (item: any) => {
     // 用「包含」而不是「相等」定位：snippet 是检索块的前 200 字截断，比库里那块短
     const probe = (item.snippets?.[0] || "").slice(0, 20);
     const hit = (res.chunks || []).find((c: any) =>
-      (c.content || "").includes(probe)
+      (c.content || "").includes(probe),
     );
     matchedSeq.value = hit ? hit.seq : null;
   } catch (e: any) {
@@ -181,14 +182,29 @@ onMounted(() => {
             >
               带意见重写
             </el-button>
-            <el-button size="small" :loading="rerunning" @click="handleRerun">重新调研</el-button>
-            <el-button size="small" :loading="exporting" @click="handleExportReport">导出报告</el-button>
-            <el-tag v-if="quality" :type="quality.passed === true
-              ? 'success'
-              : quality.passed === false
-                ? 'warning'
-                : 'info'
-              " size="small" effect="light">
+            <el-button size="small" type="warning" :loading="rerunning" @click="handleRerun"
+              >重新调研</el-button
+            >
+            <el-button
+              size="small"
+              type="primary"
+              :loading="exporting"
+              @click="handleExportReport"
+              >导出报告</el-button
+            >
+            <el-tag
+              v-if="quality"
+              :type="
+                quality.passed === true
+                  ? 'success'
+                  : quality.passed === false
+                    ? 'warning'
+                    : 'info'
+              "
+              size="small"
+              effect="light"
+              style="margin: 0 8px"
+            >
               {{
                 quality.passed === true
                   ? `✅ 质检通过（${quality.score}分）`
@@ -197,12 +213,31 @@ onMounted(() => {
                     : "未执行质检"
               }}
             </el-tag>
-            <el-button v-if="quality?.issues?.length" link type="primary" size="small" @click="issuesVisible = true">
+            <el-button
+              v-if="quality?.issues?.length"
+              link
+              type="primary"
+              size="small"
+              @click="issuesVisible = true"
+            >
               评审意见（{{ quality.issues.length }}）
             </el-button>
           </div>
         </div>
       </template>
+      <el-alert
+        v-if="quality?.has_material === false"
+        class="no-material-alert"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 14px"
+      >
+        <template #title>
+          本次调研未检索到相关资料，内容仅由模型知识生成
+          <el-button link type="warning" size="small" @click="handleRerun">重新调研</el-button>
+        </template>
+      </el-alert>
       <template v-for="item in report.content.sections" :key="item.title">
         <h2 class="section-title">{{ item.title }}</h2>
         <div class="section-content" v-html="renderMarkdown(item.content)" />
@@ -215,15 +250,25 @@ onMounted(() => {
 
     <el-card v-if="groupedCitations.length > 0" class="report-card">
       <template #header>引用来源</template>
-      <div v-for="item in groupedCitations" :key="item.key" class="citation-item"
-        :class="{ 'is-clickable': item.document_id }" @click="openSource(item)">
+      <div
+        v-for="item in groupedCitations"
+        :key="item.key"
+        class="citation-item"
+        :class="{ 'is-clickable': item.document_id }"
+        @click="openSource(item)"
+      >
         <div class="citation-head">
-          <el-tag size="small" :type="item.source_type === 'kb' ? 'success' : 'info'">
+          <el-tag
+            size="small"
+            :type="item.source_type === 'kb' ? 'success' : 'info'"
+          >
             {{ item.source_type === "kb" ? "知识库" : item.source_type }}
           </el-tag>
           <span class="citation-title">{{ item.source_title }}</span>
           <!-- 显示被哪些章节引用过 -->
-          <span class="citation-sections">被 {{ item.sections.length }} 章引用</span>
+          <span class="citation-sections"
+            >被 {{ item.sections.length }} 章引用</span
+          >
         </div>
         <p v-if="item.snippets?.length" class="citation-snippet">
           “{{ item.snippets.join(" … ") }}”
@@ -231,6 +276,28 @@ onMounted(() => {
       </div>
     </el-card>
     <el-dialog v-model="issuesVisible" title="质检评审意见" width="560px">
+      <div v-if="quality?.dimensions?.length" style="margin-bottom: 12px">
+        <div
+          v-for="d in quality.dimensions"
+          :key="d.name"
+          style="
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+          "
+        >
+          <span style="width: 56px">{{ d.name }}</span>
+          <el-progress
+            :percentage="Math.round((d.score / 25) * 100)"
+            :show-text="false"
+            style="flex: 1"
+          />
+          <span style="color: var(--el-text-color-secondary); font-size: 12px"
+            >{{ d.score }}/25</span
+          >
+        </div>
+      </div>
       <ol class="issue-list">
         <li v-for="(issue, i) in quality.issues" :key="i">{{ issue }}</li>
       </ol>
@@ -243,7 +310,11 @@ onMounted(() => {
         style="margin-bottom: 12px"
       >
         <template #title>
-          质检发现 {{ quality.issues.length }} 个问题，可在「评审意见」里查看后，挑你要改的写进下方
+          质检发现
+          {{
+            quality.issues.length
+          }}
+          个问题，可在「评审意见」里查看后，挑你要改的写进下方
         </template>
       </el-alert>
       <el-input
@@ -253,7 +324,8 @@ onMounted(() => {
         placeholder="例如：补充一节「结论」；技术架构章节补上资料来源编号；第一、三章内容重复，请合并论述"
       />
       <div class="rewrite-tip">
-        注意：这会以「原调研目标 + 你的意见」发起一次全新的调研，旧报告会完整保留。
+        注意：这会以「原调研目标 +
+        你的意见」发起一次全新的调研，旧报告会完整保留。
       </div>
       <template #footer>
         <el-button @click="rewriteVisible = false">取消</el-button>
@@ -267,7 +339,11 @@ onMounted(() => {
         </el-button>
       </template>
     </el-dialog>
-    <ChunkDrawer v-model="sourceDrawer" :doc-detail="sourceDetail" :highlight-seq="matchedSeq" />
+    <ChunkDrawer
+      v-model="sourceDrawer"
+      :doc-detail="sourceDetail"
+      :highlight-seq="matchedSeq"
+    />
   </div>
 </template>
 
@@ -296,7 +372,7 @@ onMounted(() => {
 
 .report-quality {
   display: flex;
-  gap: 12px;
+  align-items: center;
 }
 
 .section-title {
@@ -384,6 +460,7 @@ onMounted(() => {
   border-radius: 6px;
   transition: background-color 0.2s;
 }
+
 .citation-item.is-clickable:hover {
   background-color: var(--el-fill-color-light);
 }

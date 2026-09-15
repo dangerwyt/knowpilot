@@ -20,3 +20,8 @@ export interface ITaskCreate {
   kb_ids?: string[];
   title?: string;
 }
+
+export interface IPrecheck {
+  has_material: boolean | null;
+  material_count: number;
+}

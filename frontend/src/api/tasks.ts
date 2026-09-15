@@ -1,5 +1,5 @@
 import http from "./http";
-import type { ITask, ITaskCreate } from "@/typing/tasks";
+import type { ITask, ITaskCreate, IPrecheck } from "@/typing/tasks";
 
 export function taskList(): Promise<ITask[]> {
   return http.get<ITask[]>("/tasks");
@@ -19,4 +19,11 @@ export function resumeTask(taskId: string): Promise<ITask> {
 
 export function cancelTask(taskId: string): Promise<ITask> {
   return http.post<ITask>(`/tasks/${taskId}/cancel`);
+}
+
+export function precheckTask(payload: {
+  objective: string;
+  kb_ids?: string[];
+}): Promise<IPrecheck> {
+  return http.post<IPrecheck>("/tasks/precheck", payload);
 }
