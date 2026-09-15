@@ -94,7 +94,9 @@ def critic(state: ResearchState) -> dict:
     dims = [d.model_dump() for d in response.dimensions]
     total = sum(d["score"] for d in dims) if len(dims) == 4 else response.score
 
-    print(f"[critic] score={response.score} issues={response.issues}")
+    # 日志里同时打 total（落库的那个分）与 raw（模型自己给的总分）：
+    # 两者不一致 = 模型四项加错了，total 已经用求和纠正过，但对不上时要能看出来
+    print(f"[critic] score={total} raw={response.score} issues={response.issues}")
 
     return {
         "reviewed": True,

@@ -38,7 +38,17 @@ B2 四项齐全
 B3 每项 score ∈ [0, 25]
 B4 四个维度名全覆盖
 B5 分项之和 == 总分（模型算错就该拦住）
+B6 日志里打的 score == 落库值 == 分项之和（用假模型构造「模型算错」，见下）
+B7 模型自己报的总分要作为 raw= 留在日志里
 D1 降级分支（真模拟 LLM 连续失败）也要带 dimensions 键
+
+B6/B7 为什么必须用假模型
+----------------------
+模型绝大多数时候加得对。此时 `print(f"score={total}")` 与
+`print(f"score={response.score}")` 输出**完全相同** —— 拿真 LLM 根本分不出
+日志打的是哪个变量，判据会恒 PASS（等于没验）。
+把 `review_model` 换成「总分报 99、四个分项各 10 分」的假模型，
+两种写法立刻分道扬镳：真和 40 vs 模型报 99。
 
 只读文件 + 进程内直调，不改任何数据、不发任务。
 """
@@ -46,6 +56,9 @@ D1 降级分支（真模拟 LLM 连续失败）也要带 dimensions 键
 from __future__ import annotations
 
 import ast
+import contextlib
+import io
+import re
 import sys
 from pathlib import Path
 
@@ -311,6 +324,100 @@ def run_behavior() -> None:
     record("B5", total == ssum,
            f"分项之和 == 总分（{ssum}）" if total == ssum
            else f"对不上：分项之和 {ssum} vs 总分 {total} ⇒ 模型算错，需代码兜底或收紧 prompt")
+
+    # ---------- B6/B7：伪造「模型四项加错」，验日志与落库是不是同一个数
+    run_forged_total(state)
+
+
+# ---------------------------------------------------------------- B6/B7 · 伪造模型
+FORGED_TOTAL = 99   # 假模型自己报的总分（故意与分项和对不上）
+FORGED_DIM = 10     # 四个分项各 10 分 ⇒ 真和 40
+
+
+def judge_critic_log(printed: str, returned_score, true_sum: int):
+    """判定 critic 那行日志。返回 (B6 过?, B6 说明, B7 过?, B7 说明)。
+
+    抽成独立函数是为了能自检：同一套判定必须顶得住「改前的日志格式」，
+    否则判据可能恒真（踩坑 #96）。
+    """
+    m = re.search(r"\[critic\]\s*score=(\S+)\s+raw=(\S+)", printed)
+    logged = m.group(1) if m else None
+
+    ok6 = logged is not None and logged == str(returned_score) == str(true_sum)
+    if m is None:
+        detail6 = (f"日志里找不到「[critic] score=… raw=…」的格式，"
+                   f"实际输出 {printed[:70]!r}")
+    elif logged == str(FORGED_TOTAL):
+        detail6 = (f"日志打的是模型自己报的 {FORGED_TOTAL}，落库却是 {returned_score}"
+                   f" ⇒ 日志与落库对不上，事后排查会被带偏")
+    elif ok6:
+        detail6 = (f"日志 score={logged} == 落库 {returned_score} == 分项之和 {true_sum}"
+                   f"（模型报的 {FORGED_TOTAL} 没被当成总分）")
+    else:
+        detail6 = (f"日志 score={logged}、落库 {returned_score}、分项之和 {true_sum}"
+                   f" —— 三者没对齐")
+
+    ok7 = m is not None and m.group(2) == str(FORGED_TOTAL)
+    detail7 = (f"日志带 raw={m.group(2)}（模型原始分可见，能看出模型算错了）" if ok7
+               else (f"日志没有 raw= 字段 ⇒ 模型报的 {FORGED_TOTAL} 被吞掉"
+                     if m else "日志格式不对，见 B6"))
+    return ok6, detail6, ok7, detail7
+
+
+def run_forged_total(state: dict) -> None:
+    """把 review_model 换成「总分报 99、四项各 10 分」的假模型，逼出真和 40。
+
+    只有在 response.score != sum(dimensions.score) 时，才能区分日志打的是
+    total 还是 response.score —— 这就是这个假模型存在的唯一理由。
+
+    替换成 RunnableLambda 而不是普通对象：critic 里是
+    `review_template | review_model.with_structured_output(...)`，
+    而 `|` 的右操作数必须是 Runnable，普通对象会直接抛 TypeError。
+    """
+    import app.services.agent.nodes as nodes_mod
+    from app.services.agent.nodes import critic
+    from langchain_core.runnables import RunnableLambda
+
+    def _fake_review(_payload) -> object:
+        return nodes_mod.ReviewResult(
+            score=FORGED_TOTAL,
+            dimensions=[nodes_mod.DimensionScore(name=n, score=FORGED_DIM)
+                        for n in DIMENSIONS],
+            issues=["（伪造）模型报的总分与分项之和不一致"],
+            feedback="（伪造）",
+        )
+
+    class _FakeModel:
+        def with_structured_output(self, _schema):
+            return RunnableLambda(_fake_review)
+
+    true_sum = FORGED_DIM * len(DIMENSIONS)
+    buf = io.StringIO()
+    orig = nodes_mod.review_model
+    try:
+        nodes_mod.review_model = _FakeModel()
+        with contextlib.redirect_stdout(buf):
+            forged = critic(dict(state))
+    finally:
+        nodes_mod.review_model = orig
+
+    printed = buf.getvalue().strip()
+    print(f"  伪造模型下 critic 的日志 = {printed!r}")
+    print(f"  返回值 score = {forged.get('score')}；分项之和 = {true_sum}；"
+          f"模型报的 = {FORGED_TOTAL}")
+
+    b6, d6, b7, d7 = judge_critic_log(printed, forged.get("score"), true_sum)
+    record("B6", b6, d6)
+    record("B7", b7, d7)
+
+    # S1 判据自检：改前的日志格式（打模型原始分、没有 raw=）喂给同一套判定，必须报 FAIL
+    old_log = (f"[critic] score={FORGED_TOTAL} "
+               f"issues=['（伪造）模型报的总分与分项之和不一致']")
+    ob6, _, ob7, _ = judge_critic_log(old_log, true_sum, true_sum)
+    record("S1", (not ob6) and (not ob7),
+           "自检：把「改前的日志格式」喂进同一套判定，B6/B7 都报 FAIL ⇒ 判据确实能证伪"
+           if (not ob6 and not ob7)
+           else f"自检失败：旧写法竟然也过了（B6={ob6} B7={ob7}）⇒ 判据形同虚设")
 
 
 # ---------------------------------------------------------------- D 组 · 降级
