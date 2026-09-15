@@ -229,8 +229,15 @@ async def _run(task_id: str) -> None:
             all_doc_ids = {d for sec in evidence_used for d in sec["document_ids"]}  # 全部被引用文档
 
             if all_doc_ids:
-                docs = await session.scalars(select(Document).where(Document.id.in_(all_doc_ids)))
-                title_map = {doc.id: doc.file_name for doc in docs}
+                # kb_id 必须跟着文档一起查出来，不能想当然写 kb_ids[0]：
+                # 一个任务可以挂多个知识库，写死第一个会让来自其它库的引用记错所属库
+                # （document_id 一直是对的，只有 kb_id 会错，所以从报告上看不出来）
+                doc_rows = (await session.execute(
+                    select(Document.id, Document.file_name, Document.kb_id)
+                    .where(Document.id.in_(all_doc_ids))
+                )).all()
+                title_map = {r[0]: r[1] for r in doc_rows}
+                kb_map = {r[0]: r[2] for r in doc_rows}
                 for evidence in evidence_used:
                     for doc_id in evidence["document_ids"]:
                         session.add(Citation(
@@ -239,7 +246,7 @@ async def _run(task_id: str) -> None:
                             source_type="kb",
                             source_title=title_map.get(doc_id, str(doc_id)),
                             snippet=evidence["snippets"][0][:200] if evidence["snippets"] else None,
-                            kb_id=kb_ids[0],
+                            kb_id=kb_map.get(doc_id),
                             document_id=doc_id,
                         ))
 
