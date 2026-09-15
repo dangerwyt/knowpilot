@@ -72,8 +72,8 @@ docker compose up -d      # 连 backend / worker / frontend 一起起
 ```
 
 省事，但改代码调试不如本机跑方便。
-注意 compose 里的 worker 没带 `--pool=solo`（容器内默认多进程），
-若要贴合"单 worker"的约束，需要给该服务补上 `--pool=solo --concurrency=1`。
+compose 里的 worker 已同样带上 `--pool=solo`——容器内默认走 prefork（本机 16 核＝16 个进程），
+会同时消费一条队列，把"单 worker 串行"这个前提挖掉。
 
 ## 目录
 
