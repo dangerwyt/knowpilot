@@ -17,6 +17,16 @@
  *   D4 点「仍要继续」        → 发出了 POST /tasks（1 次）
  *   D5 相关目标 + 选了知识库 → 不弹框、直接发起，且 precheck 调了 1 次
  *   D6 不选知识库            → **不调** precheck、直接发起（没 kb 不该去预检）
+ *   D7 伪造 material_count=7 → 弹窗文案显示「7 条相关片段」   ← 反事实判据，重点
+ *   D8 伪造 material_count=3 → 弹窗文案显示「3 条相关片段」（第二点印证）
+ *
+ * D7/D8 为什么必须伪造响应
+ * ----------------------
+ * has_material=false 时后端必然返回 0，所以「用 pre.material_count 渲染」和
+ * 「文案里写死 0」**渲染结果一模一样** —— 拿真响应根本分不出这两种实现，
+ * 判据会恒 PASS（等于没验，踩坑 #96）。
+ * 把响应的 material_count 改成 7 和 3：跟着变才说明数字真来自 precheck；
+ * 用两个不同的值，是为了排除「恰好写死成 7」这种巧合。
  *   E1 场景5 真发无资料任务   → 时间线里 probe 那行是 warning 色   ← 需真任务
  *   E2 同一次任务里的其它行   → 不是 warning（对照：证明不是"全变黄"）
  *
@@ -44,6 +54,8 @@ const SKIP_SLOW = process.argv.includes("--skip-slow");
 const calls = { precheck: [], createTask: [], realTaskId: null };
 /** 场景 1-4 拦掉 POST /tasks（只看"发没发"）；场景 5 放行（要真任务） */
 let allowRealTask = false;
+/** 场景 6 用来篡改 precheck 响应的 material_count；null = 照常放行真响应 */
+let forgeMaterialCount = null;
 const RESULTS = [];
 function record(cid, ok, detail) {
   const tag = ok === null ? "SKIP" : ok ? "PASS" : "FAIL";
@@ -155,7 +167,16 @@ async function clickBoxButton(page, label) {
     const method = req.method();
     if (url.includes("/api/v1/tasks/precheck")) {
       calls.precheck.push(req.postData() || "");
-      return req.continue();
+      if (forgeMaterialCount === null) return req.continue();
+      // 场景 6：伪造非 0 的 count，用来区分「渲染变量」和「写死 0」
+      return req.respond({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          has_material: false,
+          material_count: forgeMaterialCount,
+        }),
+      });
     }
     if (method === "POST" && /\/api\/v1\/tasks$/.test(url)) {
       calls.createTask.push(req.postData() || "");
@@ -259,6 +280,37 @@ async function clickBoxButton(page, label) {
     calls.precheck.length === 0
       ? `没选知识库时不去预检（precheck 0 次）、直接发起 ${calls.createTask.length} 次`
       : `没选知识库也调了 ${calls.precheck.length} 次 precheck —— 白等一次网络往返`);
+
+  // ---------- 场景 6：篡改 precheck 的 material_count，验文案里的数字真来自响应
+  // 见文件头 D7/D8 的说明：真实情况 count 恒为 0，分不出「变量」和「写死 0」。
+  for (const n of [7, 3]) {
+    forgeMaterialCount = n;
+    calls.precheck.length = 0;
+    calls.createTask.length = 0;
+    await page.goto(WB, { waitUntil: "networkidle2" });
+    await pickKb(page);
+    await fillAndSubmit(page, OBJ_WITHOUT);
+    const box = await waitConfirmBox(page);
+    const text = box ? box.text : "";
+    console.log(`场景6（伪造 material_count=${n}）：${box ? `"${text.slice(0, 72)}"` : "（没弹框）"}`);
+
+    const follows = !!box && text.includes(`${n} 条相关片段`);
+    let detail;
+    if (!box) {
+      detail = `篡改 count=${n} 后没弹确认框 —— 触发条件不该受 material_count 影响`;
+    } else if (follows) {
+      detail = `后端说 ${n} 条，弹窗就显示「${n} 条相关片段」⇒ 数字确实来自 precheck 响应`;
+    } else if (text.includes("0 条相关片段")) {
+      detail = `后端说 ${n} 条，弹窗却显示「0 条相关片段」⇒ 文案里把它写死成 0 了`;
+    } else {
+      detail = `后端说 ${n} 条，弹窗里找不到「${n} 条相关片段」，实际文案：${text.slice(0, 60)}`;
+    }
+    record(n === 7 ? "D7" : "D8", follows, detail);
+
+    if (box) await clickBoxButton(page, "先去补资料"); // 走取消路径，不真发起任务
+    await sleep(700);
+  }
+  forgeMaterialCount = null; // 复位，别影响后面的真任务场景
 
   // ---------- 场景 5：真发一个无资料任务，看时间线里 probe 那行的颜色
   if (SKIP_SLOW) {

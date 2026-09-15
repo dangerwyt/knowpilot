@@ -55,7 +55,7 @@ async function submit() {
       if (pre.has_material === false) {
         try {
           await ElMessageBox.confirm(
-            `所选知识库未检索到与「${payload.objective}」相关的资料（0 条相关片段）。继续将仅凭模型知识撰写，报告可能缺少内部资料支撑。`,
+            `所选知识库未检索到与「${payload.objective}」相关的资料（${pre.material_count} 条相关片段）。继续将仅凭模型知识撰写，报告可能缺少内部资料支撑。`,
             "未找到相关资料",
             {
               confirmButtonText: "仍要继续",
