@@ -117,6 +117,8 @@ WHITELIST = [
     "backend/playground/t89b_frontend_precheck_test.js",
     "backend/playground/t98_event_order_test.py",
     "backend/playground/check_worker_start.py",
+    "backend/playground/t99_fixes_test.py",
+    "backend/playground/t99_frontend_icon_test.js",
 ]
 
 
