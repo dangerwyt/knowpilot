@@ -89,7 +89,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       MILVUS_URI: http://milvus:19530
     volumes: [./backend:/app]
-    command: celery -A app.services.task_queue.celery_app worker --loglevel=info
+    # --pool=solo 是硬约束，不是优化：多进程 worker 会并发消费同一队列，
+    # 本项目"单 worker 串行"的前提（见 docs/踩坑记录.md #14）在容器里同样成立。
+    command: celery -A app.services.task_queue.celery_app worker --pool=solo --loglevel=info
     depends_on:
       redis: { condition: service_healthy }
       postgres: { condition: service_healthy }
