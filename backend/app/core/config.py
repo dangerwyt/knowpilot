@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     version: str = "0.1.0"
     debug: bool = True
     quality_pass_score: int = 70
+    # probe 资料相关性阈值（Milvus COSINE 相似度）
+    # 实测：真相关 top1 ≥ 0.4591，真无关 top1 ≤ 0.3643 → 取中点
+    probe_min_score: float = 0.41
 
     # 数据库与中间件
     database_url: str = "postgresql+asyncpg://knowpilot:change-me@localhost/knowpilot"

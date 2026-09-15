@@ -21,3 +21,5 @@ class ResearchState(TypedDict):
     feedback: str | None  # 人工干预指令
     issues: list[str]  # 质检问题列表
     focus: list[str]  # 每章写作侧重
+    has_material: bool  # 是否有相关资料
+    material_count: int  # 预检命中的相关片段数（供事件文案用）

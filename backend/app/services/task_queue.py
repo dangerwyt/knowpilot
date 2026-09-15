@@ -153,7 +153,22 @@ async def _run(task_id: str) -> None:
                 stream_mode="updates"
         ):
             for node_name, update in step.items():
-                if node_name == "planner":
+                if node_name == "probe":
+                    flag = update.get("has_material")
+                    count = update.get("material_count", 0)
+                    if flag is True:
+                        detail = f"知识库可用资料（{count} 条相关片段）"
+                    elif flag is False:
+                        detail = "知识库未检索到相关内容，仅凭模型知识拆章与撰写"
+                    else:
+                        detail = "资料预检未完成（未关联知识库或检索失败）"
+                    await publish_task_event(
+                        task_id=task_id,
+                        event="agent_step",
+                        data={"step": "probe", "status": "done", "detail": detail}
+                    )
+
+                elif node_name == "planner":
                     n = len(update.get("plan", []))
                     await publish_task_event(
                         task_id=task_id,

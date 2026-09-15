@@ -106,13 +106,17 @@ def probe(state: ResearchState) -> dict:
 
         embedder = get_embedder()
         vector = embedder.embed_query(objective)
-        hits = search(vector, kb_ids, top_k=5, document_ids=state.get("ready_doc_ids"), epochs=state.get("ready_doc_epochs"))
+        hits = search(vector, kb_ids, top_k=5, document_ids=state.get("ready_doc_ids"),
+                      epochs=state.get("ready_doc_epochs"))
+
+        # Milvus 只按 kb_id 过滤，没有相似度阈值 —— 资料完全不相关时也会返回 top_k 条噪声
+        hits = [h for h in hits if (h.get("distance") or 0) >= settings.probe_min_score]
 
         if not hits:
-            return {"kb_overview": "（知识库未检索到相关内容，仅凭模型知识拆章与撰写）"}
+            return {"kb_overview": "（知识库未检索到相关内容，仅凭模型知识拆章与撰写）", "has_material": False, "material_count": 0}
 
         overview = "\n---\n".join(h["content"][:200] for h in hits)
-        return {"kb_overview": f"知识库可用资料（{len(hits)} 条相关片段，节选）：\n{overview}"}
+        return {"kb_overview": f"知识库可用资料（{len(hits)} 条相关片段，节选）：\n{overview}", "has_material": True, "material_count": len(hits)}
 
     except Exception as e:
         return {"kb_overview": f"（知识库检索失败：{str(e)}，仅凭模型知识拆章与撰写）"}
@@ -123,7 +127,8 @@ def planner(state: ResearchState) -> dict:
         ("system", "你是一个竞品分析师。把给定调研主题拆解成 3-5 个报告章节标题。"
                    "拆解原则：章节规划应贴合可用资料的范围——资料覆盖充分的方面可深入拆解，"
                    "资料明显未覆盖的方面不要硬拆（否则正文无据可写）。"
-                   "若资料为空则按模型知识正常拆解。"
+                   "资料为空或与主题不相关时，仍严格输出 3-5 章，按模型知识正常拆解即可，"
+                   "不要为了覆盖更多方面而增加章节。"
                    "\n\n输出格式（必须严格遵守）："
                    "必须同时输出 plan 和 focus 两个数组，长度严格相等（一一对应）。"
                    "plan 是章节标题列表；focus 是每章对应的侧重角度（该章应覆盖什么、避开什么）。"
@@ -139,14 +144,19 @@ def planner(state: ResearchState) -> dict:
     chain = template | model.with_structured_output(PlanState)
 
     response = chain.invoke({"objective": objective, "kb_overview": kb_overview})
-
+    plan, focus = response.plan, response.focus
+    # 兜底：实测无资料时模型出过 6-8 章，prompt 约束不住就裁剪
+    if len(plan) > 5:
+        plan, focus = plan[:5], focus[:5]
     return {
-        "plan": response.plan,
-        "focus": response.focus,
+        "plan": plan,
+        "focus": focus,
     }
 
 
 def retriever(state: ResearchState) -> dict:
+    if state.get("has_material") is False:
+        return {"evidence": [{"question": p, "hits": []} for p in state.get("plan", [])]}
     kb_ids = state.get("kb_ids") or []
     if not kb_ids:
         return {
@@ -160,7 +170,8 @@ def retriever(state: ResearchState) -> dict:
     evidence = []
     for plan in plans:
         vector = embedder.embed_query(plan)
-        hits = search(vector, kb_ids, top_k=3, document_ids=state.get("ready_doc_ids"), epochs=state.get("ready_doc_epochs"))
+        hits = search(vector, kb_ids, top_k=3, document_ids=state.get("ready_doc_ids"),
+                      epochs=state.get("ready_doc_epochs"))
         evidence.append({
             "question": plan,
             "hits": hits,
