@@ -23,3 +23,4 @@ class ResearchState(TypedDict):
     focus: list[str]  # 每章写作侧重
     has_material: bool  # 是否有相关资料
     material_count: int  # 预检命中的相关片段数（供事件文案用）
+    dimensions: list[dict]  # 质检各维度得分（[{name, score, comment}]）

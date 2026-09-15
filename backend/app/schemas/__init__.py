@@ -137,3 +137,13 @@ class CitationOut(BaseModel):
 
 class SectionRevisitIn(BaseModel):
     instruction: str
+
+
+class PrecheckIn(BaseModel):
+    objective: str = Field(min_length=1)
+    kb_ids: list[str] | None = None
+
+
+class PrecheckOut(BaseModel):
+    has_material: bool | None = None
+    material_count: int = 0

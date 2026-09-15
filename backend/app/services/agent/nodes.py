@@ -24,9 +24,16 @@ class SectionContent(BaseModel):
     content: str
 
 
+class DimensionScore(BaseModel):  # ← 新增
+    name: str
+    score: int
+    comment: str = ""
+
+
 class ReviewResult(BaseModel):
     score: int
     issues: list[str]
+    dimensions: list[DimensionScore] = []
     feedback: str
 
 
@@ -40,7 +47,9 @@ review_template = ChatPromptTemplate.from_messages([
                "2) 相关度：内容紧扣调研目标，无跑题；"
                "3) 事实性：关键论断是否基于检索证据（照资料写而非凭空捏造）；"
                "4) 结构规范：章节层次清晰、格式正确。"
-               "打分规则：满分 100，按维度客观评分并合计。同时给出问题清单（具体到章节）和修改意见。"
+               "打分规则：四个维度各按 0-25 分打分（四项合计满分 100）；dimensions 里 name 必须严格使用"
+               "「完整度」「相关度」「事实性」「结构规范」这四个词，score 必须等于四项之和。"
+               "同时给出问题清单（具体到章节）和修改意见。"
                "评分校准（重要）：作者只能基于检索资料写作。若资料本身未覆盖某信息，"
                "报告如实说明'资料未覆盖'属正确行为，不应因此扣分；"
                "仅在资料已提供却未引用、或编造资料中不存在的内容时才判为事实性问题。"
@@ -79,47 +88,61 @@ def critic(state: ResearchState) -> dict:
             "feedback": "",
             "issues": ["本次报告已生成，质检服务暂不可用，未执行自动评审。"],
             "retries": state.get("retries", 0) + 1,
+            "dimensions": [],
         }
+
+    dims = [d.model_dump() for d in response.dimensions]
+    total = sum(d["score"] for d in dims) if len(dims) == 4 else response.score
 
     print(f"[critic] score={response.score} issues={response.issues}")
 
     return {
         "reviewed": True,
-        "passed": response.score >= settings.quality_pass_score,
-        "score": response.score,
+        "passed": total >= settings.quality_pass_score,
+        "score": total,
         "feedback": response.feedback,
         "retries": state.get("retries", 0) + 1,
         "issues": response.issues,
+        "dimensions": dims,
     }
 
 
-def probe(state: ResearchState) -> dict:
-    """planner 前的资料预检：用调研目标粗检知识库，供拆章参考。"""
-    kb_ids = state.get("kb_ids") or []
-    objective = state["objective"]
-    if not kb_ids:
-        return {"kb_overview": "（未关联知识库，仅凭模型知识拆章与撰写）"}
+def probe_material(objective: str, kb_ids: list[str],
+                   document_ids: list[str] | None = None,
+                   epochs: list[int] | None = None) -> tuple[bool | None, int, str]:
+    """调研目标在知识库里有没有相关资料。
 
+    返回 (has_material, material_count, overview)：
+      has_material 三态 —— True 有 / False 明确没有 / None 降级（未关联 kb 或检索失败）
+      overview     现成的「资料概览」文案，probe() 直接塞进 kb_overview
+    """
+    if not kb_ids:
+        return None, 0, "（未关联知识库，仅凭模型知识拆章与撰写）"
     try:
         from app.services.rag.milvus_client import search
         from app.services.rag import get_embedder
 
         embedder = get_embedder()
         vector = embedder.embed_query(objective)
-        hits = search(vector, kb_ids, top_k=5, document_ids=state.get("ready_doc_ids"),
-                      epochs=state.get("ready_doc_epochs"))
-
-        # Milvus 只按 kb_id 过滤，没有相似度阈值 —— 资料完全不相关时也会返回 top_k 条噪声
+        hits = search(vector, kb_ids, top_k=5, document_ids=document_ids, epochs=epochs)
         hits = [h for h in hits if (h.get("distance") or 0) >= settings.probe_min_score]
-
         if not hits:
-            return {"kb_overview": "（知识库未检索到相关内容，仅凭模型知识拆章与撰写）", "has_material": False, "material_count": 0}
-
+            return False, 0, "（知识库未检索到相关内容，仅凭模型知识拆章与撰写）"
         overview = "\n---\n".join(h["content"][:200] for h in hits)
-        return {"kb_overview": f"知识库可用资料（{len(hits)} 条相关片段，节选）：\n{overview}", "has_material": True, "material_count": len(hits)}
-
+        return True, len(hits), f"知识库可用资料（{len(hits)} 条相关片段，节选）：\n{overview}"
     except Exception as e:
-        return {"kb_overview": f"（知识库检索失败：{str(e)}，仅凭模型知识拆章与撰写）"}
+        return None, 0, f"（知识库检索失败：{str(e)}，仅凭模型知识拆章与撰写）"
+
+
+def probe(state: ResearchState) -> dict:
+    """planner 前的资料预检：用调研目标粗检知识库，供拆章参考。"""
+    has_material, count, overview = probe_material(
+        state["objective"], state.get("kb_ids") or [],
+        state.get("ready_doc_ids"), state.get("ready_doc_epochs"),
+    )
+    if has_material is None:
+        return {"kb_overview": overview}          # 降级：不带 has_material，保住三态的 None
+    return {"kb_overview": overview, "has_material": has_material, "material_count": count}
 
 
 def planner(state: ResearchState) -> dict:
@@ -200,7 +223,7 @@ async def synthesizer(state: ResearchState) -> dict:
             4. 【无标题】content 只写正文内容，不要以"## 标题"开头或包含章节标题——标题由系统在章节顶部单独展示。
             {context}
             {feedback_section}"""
-        ),
+         ),
         ("human", "{title}"),
     ])
 

@@ -3,6 +3,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -10,8 +11,9 @@ from app.api.v1.deps import get_current_user
 from app.core.db import get_db
 from app.core.redis import publish_task_event, xrange_task_events, xread_task_events
 from app.models import Project, Task, User, Report
-from app.schemas import ResumeIn, TaskCreateIn, TaskOut
+from app.schemas import ResumeIn, TaskCreateIn, TaskOut, PrecheckOut, PrecheckIn
 from app.services.task_queue import research_task
+from app.services.agent.nodes import probe_material
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -63,6 +65,15 @@ async def create_task(
     await db.refresh(task)
     research_task.delay(task.id)
     return task
+
+
+@router.post("/precheck", response_model=PrecheckOut)
+async def precheck_material(body: PrecheckIn, user: User = Depends(get_current_user)):
+    """发起前预检：目标在所选知识库里有没有相关资料。只读，不建任务、不写库。"""
+    has_material, material_count, _ = await run_in_threadpool(
+        probe_material, body.objective, body.kb_ids or []
+    )
+    return PrecheckOut(has_material=has_material, material_count=material_count)
 
 
 @router.get('', response_model=list[TaskOut])

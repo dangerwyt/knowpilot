@@ -133,10 +133,12 @@ async def _run(task_id: str) -> None:
             ready_doc_epochs = {str(r[0]): int(r[1]) for r in rows}
             await session.commit()
 
+        # 进图前的开工提示。step 用中性值 "start"：这里图还没开始跑，
+        # 写成 "planner" 会被前端渲染成 planner 的事件，时间线上就排到了 probe 前面（踩坑 #98）。
         await publish_task_event(
             task_id,
             "agent_step",
-            {"step": "planner", "status": "running", "detail": "拆解调研目标"}
+            {"step": "start", "status": "running", "detail": "开始执行调研流程"}
         )
 
         graph = build_graph()
@@ -165,7 +167,7 @@ async def _run(task_id: str) -> None:
                     await publish_task_event(
                         task_id=task_id,
                         event="agent_step",
-                        data={"step": "probe", "status": "done", "detail": detail}
+                        data={"step": "probe", "status": "done", "detail": detail, "has_material": flag}
                     )
 
                 elif node_name == "planner":
@@ -213,6 +215,9 @@ async def _run(task_id: str) -> None:
             "score": result.get("score"),
             "passed": result.get("passed"),
             "issues": issues,
+            "dimensions": result.get("dimensions") or [],
+            "has_material": result.get("has_material"),
+            "material_count": result.get("material_count"),
         }
         evidence_used = result.get("evidence_used", [])  # ① synthesizer 带回的引用元数据
 
