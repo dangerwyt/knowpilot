@@ -54,6 +54,12 @@ backend/playground/*
 !backend/playground/t82_real_env_test.py
 # T82 验收：沙箱感知版（命中改写时把相关判据标 SKIP 而非 FAIL）
 !backend/playground/t82_storage_cleanup_test.py
+# T86 验收：probe 相关性阈值 + 无资料章节数（进程内直调，不发任务）
+!backend/playground/t86_probe_threshold_test.py
+# T86 验收：端到端发真任务，带 --reuse 可复用已有任务只重跑判据
+!backend/playground/t86_e2e_task_test.py
+# T87 验收：retriever 复用 probe「无资料」结论（静态比对 + 进程内直调）
+!backend/playground/t87_retriever_material_test.py
 
 # 迁移执行记录（记录的是「这个库跑过什么」，属本地状态）
 backend/migrations/APPLIED.log
