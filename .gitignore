@@ -64,6 +64,20 @@ backend/playground/*
 !backend/playground/t83_git_repo_check.py
 # LangGraph 静默丢弃未声明 state 键的最小复现（踩坑 #91 引用）
 !backend/playground/t87_langgraph_key_probe.py
+# T88 验收：critic 分项分数（静态 + 直调质检 + 降级分支）
+!backend/playground/t88_critic_dimensions_test.py
+# T88 前端实测：质检弹窗四行分项与 DB 逐项比对
+!backend/playground/t88_frontend_dimensions_test.js
+# T89a 验收：has_material 落库 + 报告页警告条
+!backend/playground/t89a_has_material_test.py
+# T89a 前端实测：警告条三组对照（false 显示 / true 不显示 / 无键不显示）
+!backend/playground/t89a_frontend_has_material_test.js
+# T89b 验收：发起前预检接口（静态 + HTTP 三态 + 进程内降级路径）
+!backend/playground/t89b_precheck_test.py
+# T89b 前端实测：预检确认框四场景 + 真任务验 probe 行变黄（含对照组）
+!backend/playground/t89b_frontend_precheck_test.js
+# T98 验收：事件流第一条提示不冒用节点名（含判据自检，踩坑 #98）
+!backend/playground/t98_event_order_test.py
 
 # 迁移执行记录（记录的是「这个库跑过什么」，属本地状态）
 backend/migrations/APPLIED.log

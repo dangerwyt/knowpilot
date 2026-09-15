@@ -109,6 +109,13 @@ WHITELIST = [
     "backend/playground/t87_retriever_material_test.py",
     "backend/playground/t83_git_repo_check.py",
     "backend/playground/t87_langgraph_key_probe.py",
+    "backend/playground/t88_critic_dimensions_test.py",
+    "backend/playground/t88_frontend_dimensions_test.js",
+    "backend/playground/t89a_has_material_test.py",
+    "backend/playground/t89a_frontend_has_material_test.js",
+    "backend/playground/t89b_precheck_test.py",
+    "backend/playground/t89b_frontend_precheck_test.js",
+    "backend/playground/t98_event_order_test.py",
 ]
 
 
