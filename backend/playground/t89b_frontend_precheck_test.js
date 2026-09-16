@@ -36,8 +36,12 @@
  * 只验「probe 行是黄的」的话，一个「所有行都变黄」的实现也能通过。
  *
  * 跑法（需要 vite:5173 + uvicorn:8000；E 组还会真发一个任务）
- *   NODE_PATH=D:/nvm/node_global/node_modules node t89b_frontend_precheck_test.js
- *   NODE_PATH=D:/nvm/node_global/node_modules node t89b_frontend_precheck_test.js --skip-slow
+ *   KP_TEST_EMAIL=<测试账号> KP_TEST_PASSWORD=<口令> \
+ *     NODE_PATH=D:/nvm/node_global/node_modules node t89b_frontend_precheck_test.js
+ *   （加 --skip-slow 可跳过 E 组那个真发任务的慢用例）
+ *
+ * 测试账号走环境变量：公开仓库里不留明文口令（t83 的 C7 判据会扫出来）。
+ * 本地库没有这个账号就先注册：POST /api/v1/auth/register
  */
 const puppeteer = require("puppeteer");
 
@@ -56,6 +60,19 @@ const calls = { precheck: [], createTask: [], realTaskId: null };
 let allowRealTask = false;
 /** 场景 6 用来篡改 precheck 响应的 material_count；null = 照常放行真响应 */
 let forgeMaterialCount = null;
+// 本地测试账号走环境变量：公开仓库里不留明文口令（t83 的 C7 判据会扫）。
+// 放在模块顶层 —— 环境没配好就立刻报错退出，不必先跑一趟 DB 查询才发现。
+const TEST_EMAIL = process.env.KP_TEST_EMAIL;
+const TEST_PASSWORD = process.env.KP_TEST_PASSWORD;
+if (!TEST_EMAIL || !TEST_PASSWORD) {
+  console.error(
+    "缺少 KP_TEST_EMAIL / KP_TEST_PASSWORD。示例：\n" +
+      "  KP_TEST_EMAIL=<测试账号> KP_TEST_PASSWORD=<口令> " +
+      "NODE_PATH=D:/nvm/node_global/node_modules node <本脚本>"
+  );
+  process.exit(2);
+}
+
 const RESULTS = [];
 function record(cid, ok, detail) {
   const tag = ok === null ? "SKIP" : ok ? "PASS" : "FAIL";
@@ -128,10 +145,11 @@ async function clickBoxButton(page, label) {
 }
 
 (async () => {
+  // 登录换 token（测试账号来自文件顶层的 KP_TEST_EMAIL / KP_TEST_PASSWORD）
   const lr = await fetch(`${API}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "kptest@example.com", password: "test123456" }),
+    body: JSON.stringify({ email: TEST_EMAIL, password: TEST_PASSWORD }),
   });
   const { token, user } = await lr.json();
   if (!token) throw new Error("登录失败");

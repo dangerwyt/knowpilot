@@ -229,15 +229,9 @@ CRED_PLACEHOLDER_RE = re.compile(
 )
 # 模板文件里本来就该写"变量名 + 示例值"，不是写死凭据
 CRED_SCAN_EXCLUDE_RE = re.compile(r"(?i)\.(example|sample)$")
-# 已知债务（2026-09-16 披露，待整改）：三个前端实测脚本里写死了本地测试账号口令，
-# 都是 test123456。它们是被文档点名的可复用验收工具（WHITELIST 成员），不能一删了之。
-# 记在这里而**不是**静默放过 —— 每次跑都会单独打印一行 KNOWN-DEBT，整改完就删掉对应行。
-# 只认「文件名 + 口令值完全对上」的组合，改了值或换了文件都会重新变回 FAIL。
-CRED_KNOWN_DEBT = {
-    "backend/playground/t88_frontend_dimensions_test.js": "test123456",
-    "backend/playground/t89a_frontend_has_material_test.js": "test123456",
-    "backend/playground/t89b_frontend_precheck_test.js": "test123456",
-}
+# （2026-09-16：`t88/t89a/t89b` 三个前端实测脚本写死口令的债务已整改 ——
+#  改成读 `KP_TEST_EMAIL` / `KP_TEST_PASSWORD` 环境变量，缺变量就报错退出。
+#  原先那份 CRED_KNOWN_DEBT 显式例外清单随之删除，C7 恢复成**无例外**的纯判据。）
 
 
 def c_group(pending: list[str]) -> None:
@@ -282,7 +276,6 @@ def c_group(pending: list[str]) -> None:
 
     # C7 内容兜底：不管文件叫什么名字、放在哪个目录，写死的口令都得被抓出来
     hits: list[str] = []
-    debt: list[str] = []
     cred_scanned = 0
     for rel in pending:
         if CRED_SCAN_EXCLUDE_RE.search(rel):
@@ -299,18 +292,10 @@ def c_group(pending: list[str]) -> None:
             if CRED_PLACEHOLDER_RE.search(m.group(2)):
                 continue
             line = text[:m.start()].count("\n") + 1
-            where = f"{rel}:{line} → {m.group(1)}=\"{m.group(2)}\""
-            if CRED_KNOWN_DEBT.get(rel) == m.group(2):
-                debt.append(where)
-            else:
-                hits.append(where)
+            hits.append(f"{rel}:{line} → {m.group(1)}=\"{m.group(2)}\"")
     check("C7 [卫生] 源码/脚本里没有写死的口令", not hits,
           f"扫 {cred_scanned} 个文件；命中={len(hits)}"
           + ("" if not hits else "\n           " + "\n           ".join(sorted(set(hits)))))
-    if debt:
-        print(f"[N O T E] C7 已知债务（显式放行，待整改 {len(debt)} 处，别让它长期留着）：")
-        for d in sorted(set(debt)):
-            print(f"           {d}")
 
 
 def main() -> int:
