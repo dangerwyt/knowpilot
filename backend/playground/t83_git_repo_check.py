@@ -6,14 +6,18 @@
                  **根目录只允许登记过的条目**（W3）
   D 组（死引用）：**入库文件里引用的 playground 文件必须都在仓库里**
   C 组（内容卫生）：无 .env、无大文件、无依赖目录、关键业务文件齐全；
-                   **源码/脚本里不得有写死的口令字面量**（C7）
+                   **源码/脚本里不得有写死的口令字面量**（C7）；
+                   **全部历史提交里都没有敏感文件**（C8）
 
 W3 与 C7 是「枚举式判据」的补丁（2026-09-16 加）：
   此前的判据全是「点名检查」—— 只验清单内的东西在不在，清单外的一概不看。
   结果 `_t60_fin.sh` / `_t60_retest.sh`（含明文测试口令的临时脚本）躺在仓库根目录、
   随首次全量入库（36b0990）进了公开仓库，却一条判据都没碰它。
   W3 换成「根目录白名单」：没登记 = FAIL，结构性堵住往根目录丢垃圾。
-  C7 是最后一道内容兜底：文件名/目录怎么变，写死的口令都能被抓出来。
+  C7 是内容兜底：文件名/目录怎么变，写死的口令都能被抓出来。
+  C8 是「当前树 vs 历史」的补丁：W3/C1~C7 查的全是**当前树**，把文件删掉就全绿了 ——
+  但历史提交里它还在（这正是 #103 的事故形态：文件删了、判据全 PASS、历史里却留着、
+  而且已经 push 到公开仓）。C8 遍历全部历史提交的树，口径与 G1/C1/C2/C3 一致。
 
 D 组是核心判据 —— 仓库里存不存在「叫你去跑一个不存在的文件」的情况。
 只在「会进仓库的文件」里搜引用，因为不入库的文件自己引用不到也不影响别人。
@@ -229,6 +233,9 @@ CRED_PLACEHOLDER_RE = re.compile(
 )
 # 模板文件里本来就该写"变量名 + 示例值"，不是写死凭据
 CRED_SCAN_EXCLUDE_RE = re.compile(r"(?i)\.(example|sample)$")
+# 历史里不该出现的东西 —— 口径与 G1/C1/C2/C3 一致，只是把检查对象从「当前树」
+# 换成「全部历史提交的树」。起因见 #103：文件删掉后当前树干净了，历史提交里还留着。
+HIST_FORBIDDEN_RE = re.compile(r"^_|(^|/)\.env$|(^|/)(node_modules|\.venv)/|^backend/storage/")
 # （2026-09-16：`t88/t89a/t89b` 三个前端实测脚本写死口令的债务已整改 ——
 #  改成读 `KP_TEST_EMAIL` / `KP_TEST_PASSWORD` 环境变量，缺变量就报错退出。
 #  原先那份 CRED_KNOWN_DEBT 显式例外清单随之删除，C7 恢复成**无例外**的纯判据。）
@@ -296,6 +303,27 @@ def c_group(pending: list[str]) -> None:
     check("C7 [卫生] 源码/脚本里没有写死的口令", not hits,
           f"扫 {cred_scanned} 个文件；命中={len(hits)}"
           + ("" if not hits else "\n           " + "\n           ".join(sorted(set(hits)))))
+
+    # C8 历史扫描：「删掉文件」不等于「从历史里删掉」。
+    # 2026-09-16 的 _t60_*.sh 事故里，文件从当前树删除后 W3/C1~C7 全 PASS ——
+    # 而它们还完整躺在 27 个历史提交里，且已经 push 到公开仓。
+    # 这条把上面那些「查当前树」的口径延伸到全部历史提交。
+    revs = git("rev-list", "--all").split()
+    hist_hits: list[str] = []
+    hist_paths = 0
+    for c in revs:
+        for path in git("ls-tree", "-r", "--name-only", c).split("\n"):
+            if not path:
+                continue
+            hist_paths += 1
+            if HIST_FORBIDDEN_RE.search(path):
+                hist_hits.append(f"{c[:7]}:{path}")
+    shown = sorted(set(hist_hits))
+    check(f"C8 [历史] {len(revs)} 个历史提交里都没有敏感文件", not shown,
+          f"扫 {hist_paths} 条路径；命中={len(shown)}"
+          + ("" if not shown else "\n           "
+             + "\n           ".join(shown[:8])
+             + (f"\n           …（共 {len(shown)} 条）" if len(shown) > 8 else "")))
 
 
 def main() -> int:
