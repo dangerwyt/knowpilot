@@ -118,7 +118,7 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="doc-page">
+  <div class="main">
     <div class="toolbar">
       <el-icon>
         <Filter />
@@ -209,6 +209,12 @@ onMounted(load);
 </template>
 
 <style scoped>
+.main {
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

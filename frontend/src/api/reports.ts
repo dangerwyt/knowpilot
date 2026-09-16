@@ -1,5 +1,5 @@
 import http from './http'
-import type { IReport, ICitation } from '@/typing/report'
+import type { IReport, ICitation } from '@/typing/reports'
 
 export function getReports(reportId: string): Promise<IReport> {
     return http.get<IReport>(`/reports/${reportId}`)

@@ -163,10 +163,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="kb-page">
+  <div class="main">
     <div class="toolbar">
-      <h3 style="margin: 0">知识库</h3>
-      <el-button @click="showCreate = true">新建知识库</el-button>
+      <el-button type="primary" @click="showCreate = true">新建知识库</el-button>
     </div>
 
     <el-empty v-if="kbs.length === 0" description="还没有知识库。上传团队文档后，Agent 可结合内部资料调研" />
@@ -268,6 +267,12 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.main {
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
+}
+
 .toolbar {
   display: flex;
   justify-content: space-between;

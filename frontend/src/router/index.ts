@@ -12,7 +12,7 @@ const routes = [
       {
         path: "/projects",
         component: () => import("../views/ProjectsView.vue"),
-        meta: { auth: true, title: "项目工作台" },
+        meta: { auth: true, title: "项目" },
       },
       {
         path: "/projects/:id",

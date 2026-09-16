@@ -172,13 +172,12 @@ onBeforeUnmount(() => stopStream?.());
 </script>
 
 <template>
-  <el-container style="height: 100vh">
-    <el-header class="header">
-      <span class="brand">调研工作台</span>
+  <div class="main">
+    <div class="toolbar">
       <span class="project-id">项目 {{ projectId }}</span>
-    </el-header>
+    </div>
 
-    <el-main class="main">
+    <div>
       <el-card class="form-card">
         <template #header>发起调研任务</template>
         <el-select
@@ -248,21 +247,22 @@ onBeforeUnmount(() => stopStream?.());
         v-else
         description="发起任务后，这里会实时显示 Agent 的思考与执行过程"
       />
-    </el-main>
-  </el-container>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--el-border-color-light);
+.main {
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
 }
 
-.brand {
-  font-size: 18px;
-  font-weight: 600;
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
 }
 
 .project-id {

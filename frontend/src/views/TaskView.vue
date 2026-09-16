@@ -79,8 +79,7 @@ onMounted(getTasks);
 </script>
 
 <template>
-  <div class="tasks-page">
-    <h3 class="page-title">任务列表</h3>
+  <div class="main">
     <el-table :data="data" v-loading="loading" stripe>
       <el-table-column
         prop="objective"
@@ -155,7 +154,9 @@ onMounted(getTasks);
 </template>
 
 <style scoped>
-.page-title {
-  margin: 0 0 16px;
+.main {
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
 }
 </style>
