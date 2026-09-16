@@ -24,6 +24,14 @@ Thumbs.db
 # 运行时数据（用户上传的原文件，属本地状态，不进版本控制）
 backend/storage/
 
+# 根目录下划线开头的临时脚本/目录（一次性验收、重测、调试用，不入库）
+#
+# 2026-09-16 补：_t60_fin.sh / _t60_retest.sh 随首次全量入库（36b0990）混进了
+# 公开仓库，内含明文测试口令。根因是 .gitignore 当时只约束了 backend/playground/*，
+# 对"根目录临时脚本"没有任何规则，全量 add 时它俩属于"合法文件"。
+# 这类文件一律不进仓库；t83 的 W3 组（根目录白名单）负责反向卡住漏网。
+/_*
+
 # 前端构建产物（`vue-tsc -b` 生成，源文件是 vite.config.ts）
 *.tsbuildinfo
 vite.config.js

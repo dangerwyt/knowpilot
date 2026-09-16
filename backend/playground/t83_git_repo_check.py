@@ -2,9 +2,18 @@
 
 判据分四组：
   G 组（gitignore 正反向）：该排的排掉、该留的留下
-  W 组（白名单）：被点名引用的 playground 工具确实进了仓库；没被点名的一个都没混进来
+  W 组（白名单）：被点名引用的 playground 工具确实进了仓库；没被点名的一个都没混进来；
+                 **根目录只允许登记过的条目**（W3）
   D 组（死引用）：**入库文件里引用的 playground 文件必须都在仓库里**
-  C 组（内容卫生）：无 .env、无大文件、无依赖目录、关键业务文件齐全
+  C 组（内容卫生）：无 .env、无大文件、无依赖目录、关键业务文件齐全；
+                   **源码/脚本里不得有写死的口令字面量**（C7）
+
+W3 与 C7 是「枚举式判据」的补丁（2026-09-16 加）：
+  此前的判据全是「点名检查」—— 只验清单内的东西在不在，清单外的一概不看。
+  结果 `_t60_fin.sh` / `_t60_retest.sh`（含明文测试口令的临时脚本）躺在仓库根目录、
+  随首次全量入库（36b0990）进了公开仓库，却一条判据都没碰它。
+  W3 换成「根目录白名单」：没登记 = FAIL，结构性堵住往根目录丢垃圾。
+  C7 是最后一道内容兜底：文件名/目录怎么变，写死的口令都能被抓出来。
 
 D 组是核心判据 —— 仓库里存不存在「叫你去跑一个不存在的文件」的情况。
 只在「会进仓库的文件」里搜引用，因为不入库的文件自己引用不到也不影响别人。
@@ -123,6 +132,19 @@ WHITELIST = [
 ]
 
 
+# 根目录允许出现的顶层条目（文件 + 目录）。新增一项 = 明确表态「这东西要进公开仓」。
+ROOT_WHITELIST = {
+    ".gitattributes",
+    ".gitignore",
+    ".env.example",      # 模板，只有变量名和 change-me 之类的占位值（C1 保证没有 .env）
+    "README.md",
+    "docker-compose.yml",
+    "backend",
+    "frontend",
+    "docs",
+}
+
+
 def w_group(pending: list[str]) -> None:
     missing = [p for p in WHITELIST if p not in pending]
     check(f"W1 [白名单] {len(WHITELIST)} 个被引用的 playground 工具都进了仓库", not missing,
@@ -136,6 +158,15 @@ def w_group(pending: list[str]) -> None:
     ]
     leaked = [p for p in still_ignored if p in pending]
     check("W2 [反向] 未被点名的一次性探针仍被忽略", not leaked, f"漏放={leaked or '无'}")
+
+    # W3 反向：根目录只允许登记过的条目 —— 拦住「清单外」的漏网（W1/W2 都是点名式判据，
+    # 天然管不到从没被点过名的文件，_t60_fin.sh 就是这么溜进公开仓的）
+    tops = sorted({p.split("/")[0] for p in pending})
+    extra = [t for t in tops if t not in ROOT_WHITELIST]
+    check(f"W3 [反向] 根目录无未登记条目（白名单 {len(ROOT_WHITELIST)} 项）",
+          not extra, f"实际 {len(tops)} 项；多出={extra or '无'}")
+    missing_top = [t for t in ROOT_WHITELIST if t not in tops]
+    check("W3b [正向] 根目录登记项一个不少", not missing_top, f"缺={missing_top or '无'}")
 
 
 # ---------------------------------------------------------------- D 组
@@ -184,6 +215,31 @@ def d_group(pending: list[str]) -> None:
 
 
 # ---------------------------------------------------------------- C 组
+# 硬编码凭据：带引号的字面量赋值（password / secret / api_key / token ...），长度 ≥ 6。
+# 两个刻意的收窄，都是为了不假红（判据假红几次就没人看了）：
+#   ① 只认**带引号**的值 —— .env / .env.example 的 `JWT_SECRET=change-me` 是裸值，天然不命中；
+#   ② 值命中占位符词表就放过 —— change-me / xxx / ${VAR} / *** 这类都不是真凭据。
+CRED_RE = re.compile(
+    r"(?i)\b(pass(?:word|wd|phrase)?|secret|api[_-]?key|access[_-]?token|auth[_-]?token)"
+    r"\s*[:=]\s*[\"']([^\"'\s]{6,})[\"']"
+)
+CRED_PLACEHOLDER_RE = re.compile(
+    r"(?i)change[-_]?me|placeholder|dummy|example|sample|xxx|yyy|your[-_]?|"
+    r"<|\$\{|\{\{|[*]{3,}"
+)
+# 模板文件里本来就该写"变量名 + 示例值"，不是写死凭据
+CRED_SCAN_EXCLUDE_RE = re.compile(r"(?i)\.(example|sample)$")
+# 已知债务（2026-09-16 披露，待整改）：三个前端实测脚本里写死了本地测试账号口令，
+# 都是 test123456。它们是被文档点名的可复用验收工具（WHITELIST 成员），不能一删了之。
+# 记在这里而**不是**静默放过 —— 每次跑都会单独打印一行 KNOWN-DEBT，整改完就删掉对应行。
+# 只认「文件名 + 口令值完全对上」的组合，改了值或换了文件都会重新变回 FAIL。
+CRED_KNOWN_DEBT = {
+    "backend/playground/t88_frontend_dimensions_test.js": "test123456",
+    "backend/playground/t89a_frontend_has_material_test.js": "test123456",
+    "backend/playground/t89b_frontend_precheck_test.js": "test123456",
+}
+
+
 def c_group(pending: list[str]) -> None:
     secrets = [p for p in pending if re.search(r"(^|/)\.env$", p)]
     check("C1 [卫生] 仓库里没有任何 .env（密钥文件）", not secrets,
@@ -223,6 +279,38 @@ def c_group(pending: list[str]) -> None:
     ]
     miss = [p for p in key if p not in pending]
     check("C6 [完整] 关键业务文件一个不少", not miss, f"缺={miss or '无'}")
+
+    # C7 内容兜底：不管文件叫什么名字、放在哪个目录，写死的口令都得被抓出来
+    hits: list[str] = []
+    debt: list[str] = []
+    cred_scanned = 0
+    for rel in pending:
+        if CRED_SCAN_EXCLUDE_RE.search(rel):
+            continue
+        fp = ROOT / rel
+        if not fp.is_file() or fp.stat().st_size > 500_000:
+            continue
+        try:
+            text = fp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        cred_scanned += 1
+        for m in CRED_RE.finditer(text):
+            if CRED_PLACEHOLDER_RE.search(m.group(2)):
+                continue
+            line = text[:m.start()].count("\n") + 1
+            where = f"{rel}:{line} → {m.group(1)}=\"{m.group(2)}\""
+            if CRED_KNOWN_DEBT.get(rel) == m.group(2):
+                debt.append(where)
+            else:
+                hits.append(where)
+    check("C7 [卫生] 源码/脚本里没有写死的口令", not hits,
+          f"扫 {cred_scanned} 个文件；命中={len(hits)}"
+          + ("" if not hits else "\n           " + "\n           ".join(sorted(set(hits)))))
+    if debt:
+        print(f"[N O T E] C7 已知债务（显式放行，待整改 {len(debt)} 处，别让它长期留着）：")
+        for d in sorted(set(debt)):
+            print(f"           {d}")
 
 
 def main() -> int:
