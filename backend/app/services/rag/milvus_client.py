@@ -12,13 +12,31 @@ logger = logging.getLogger(__name__)
 DIM = 1024  # qwen3.7-text-embedding 向量维度
 
 
+def _client():
+    """构造 Milvus 客户端 —— **本模块唯一入口**（2026-09-16 抽出来）。
+
+    抽它的理由：原先 6 处各自写 `MilvusClient(uri=settings.milvus_uri)`，
+    加一个 token 参数就得改 6 行，换地址同理。
+
+    token 留空是安全的：pymilvus 3.0.1 的 `MilvusClient.__init__` 签名里
+    `token: str = ""` 本来就是默认值 ⇒ 传空串与不传是同一个调用。
+    本地 Milvus 未开鉴权，实测连传一个错误的 token 也会被忽略。
+
+    ⚠️ 每次调用都**新建**一个 client，与改造前 6 处各自构造的语义完全一致。
+    不要加 @lru_cache 或模块级单例 —— 那会变成长期持有连接，是另一回事。
+    """
+    from pymilvus import MilvusClient
+
+    return MilvusClient(uri=settings.milvus_uri, token=settings.milvus_token)
+
+
 def ensure_collection(collection_name: str | None = None) -> None:
     """连接 Milvus 并确保 collection 存在（幂等）。启动时调用，容错记录告警。"""
     collection_name = collection_name or settings.milvus_collection
     try:
         from pymilvus import DataType, MilvusClient
 
-        client = MilvusClient(uri=settings.milvus_uri)
+        client = _client()
         if client.has_collection(collection_name):
             logger.info("Milvus collection %s 已存在", collection_name)
             return
@@ -58,9 +76,7 @@ def ingest_chunks(
         metadata: dict | None = None,
 ) -> int:
     """将切块 + 向量写入 Milvus。返回写入条数。"""
-    from pymilvus import MilvusClient
-
-    client = MilvusClient(uri=settings.milvus_uri)
+    client = _client()
     rows = [
         {
             "kb_id": kb_id,
@@ -104,10 +120,8 @@ def search(
     elif document_ids is not None and not document_ids:
         return []
 
-    from pymilvus import MilvusClient
-
     collection_name = collection_name or settings.milvus_collection
-    client = MilvusClient(uri=settings.milvus_uri)
+    client = _client()
     client.load_collection(collection_name)  # 检索前必须加载到内存
 
     if len(kb_ids) == 1:
@@ -149,10 +163,8 @@ def delete_by_document(
         document_id: str,
         collection_name: str | None = None,
 ):
-    from pymilvus import MilvusClient
-
     collection_name = collection_name or settings.milvus_collection
-    client = MilvusClient(uri=settings.milvus_uri)
+    client = _client()
     _filter = f'document_id == "{document_id}"'
     left: list = []
     for attempt in range(2):
@@ -171,10 +183,8 @@ def list_chunks_by_document(
         document_id: str,
         collection_name: str | None = None
 ) -> list[dict]:
-    from pymilvus import MilvusClient
-
     collection_name = collection_name or settings.milvus_collection
-    client = MilvusClient(uri=settings.milvus_uri)
+    client = _client()
     rows = client.query(
         collection_name=collection_name,
         filter=f'document_id == "{document_id}"',
@@ -193,10 +203,8 @@ def list_chunks_by_document(
 
 def inspect_chunks_by_document(document_id: str, collection_name: str | None = None) -> tuple[int, list[int]]:
     """巡检用：返回 (真实行数, 重复的 seq 列表)。不做去重——重复必须可见。"""
-    from pymilvus import MilvusClient
-
     collection_name = collection_name or settings.milvus_collection
-    client = MilvusClient(uri=settings.milvus_uri)
+    client = _client()
     rows = client.query(
         collection_name=collection_name,
         filter=f'document_id == "{document_id}"',

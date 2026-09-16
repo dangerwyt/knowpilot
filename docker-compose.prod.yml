@@ -1,0 +1,141 @@
+# KnowPilot 生产部署（阿里云 2核4G · 中国内地）
+#
+# 与 docker-compose.yml（dev）的四点差别：
+#   1. 不含 milvus / milvus-etcd / milvus-minio / minio —— 向量库走 Zilliz Cloud 托管。
+#      原因：Milvus standalone 官方要求 4 核 8G 起，这台 2核4G 低于下限，
+#      能启动不代表跑得稳（演示到一半被 OOM 干掉是最难收场的）。
+#   2. 前端不再是 `npm run dev` 的开发服务器，改为 nginx 托管 vite build 产物 + 反代 API。
+#   3. 不挂载源码、不开 --reload：跑的是镜像里的代码。dev 改一行就生效，生产故意不这样 ——
+#      生产要维持「镜像 = 代码」这个不变式，否则会出现「服务器上是什么版本」说不清的情况。
+#   4. 只对外暴露 8080（前端）。PG / Redis / 后端一律不映射宿主机端口。
+#
+# 起服务：
+#   docker-compose -f docker-compose.prod.yml up -d --build
+#
+name: knowpilot-prod
+
+# 日志限额：20G 系统盘很容易被 json-file 日志撑满（Celery 日志尤其话多）
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    # 不用 dev 那个 pgvector 镜像：代码里从未用过 pgvector（检索 100% 走 Milvus，
+    # migrations/ 里也没有 CREATE EXTENSION vector），换成 alpine 版更省内存。
+    image: postgres:16-alpine
+    container_name: knowpilot-postgres
+    environment:
+      POSTGRES_DB: knowpilot
+      POSTGRES_USER: knowpilot
+      # :? 语法 = 变量没设就直接报错退出。生产不该容忍空口令启动。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 里设置 POSTGRES_PASSWORD}
+    volumes: [pg_data:/var/lib/postgresql/data]
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowpilot"]
+      interval: 5s
+      retries: 10
+    # 故意不映射端口：5432 只有同一 docker 网络内的服务能连。
+    # 安全组里也别忘了别放行 5432 / 6379。
+
+  redis:
+    image: redis:7-alpine
+    container_name: knowpilot-redis
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        # 服务器上构建时通常能直连官方源；国内拉得慢就设 NPM/PIP 镜像
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    # 固定 tag，好让 worker 复用同一个镜像（不重复构建）
+    image: knowpilot-backend:prod
+    container_name: knowpilot-backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://knowpilot:${POSTGRES_PASSWORD:?}@postgres/knowpilot
+      REDIS_URL: redis://redis:6379/0
+      # Zilliz Cloud（托管 Milvus）。这两个必须自己在 .env 里填：
+      #   MILVUS_URI=https://in01-xxxx.serverless.ali-cn-hangzhou.cloud.zilliz.com
+      #   MILVUS_TOKEN=<控制台给的 user:password 或 API Key>
+      # 不填的话：容器能起来，但所有检索/上传都会失败 —— 所以这里直接用 :? 拦住。
+      MILVUS_URI: ${MILVUS_URI:?请在 .env 里填 Zilliz Cloud endpoint}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:?请在 .env 里填 Zilliz Cloud token}
+    volumes:
+      # 上传的原文件。backend 负责写入、worker 负责读取解析，
+      # **两个容器必须共享同一个卷**，否则 worker 会报「原始文件不存在」。
+      - storage_data:/app/storage
+    expose:
+      - "8000"        # 只对 docker 网络可见；外部一律走 nginx 的 8080
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+    logging: *default-logging
+
+  worker:
+    build:
+      context: ./backend
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: knowpilot-backend:prod
+    container_name: knowpilot-worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://knowpilot:${POSTGRES_PASSWORD:?}@postgres/knowpilot
+      REDIS_URL: redis://redis:6379/0
+      MILVUS_URI: ${MILVUS_URI:?}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:?}
+    volumes:
+      - storage_data:/app/storage
+    # --pool=solo 是硬约束，不是调优（见 docs/踩坑记录.md #14 与 T100）：多进程 worker 会
+    # 并发消费同一队列，破坏本项目「单 worker 串行」的前提。
+    # 别信启动横幅（solo 下照样打 "concurrency: 16"），要看硬证据：
+    #   docker top knowpilot-worker   →  celery 进程应为 1 个（prefork 会是 17 个）
+    command: celery -A app.services.task_queue.celery_app worker --pool=solo --loglevel=info
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+    logging: *default-logging
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        # 服务器上构建前端时若拉不动 npm，改成 https://registry.npmmirror.com
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    image: knowpilot-frontend:prod
+    container_name: knowpilot-frontend
+    ports:
+      - "8080:80"     # 全栈唯一的对外入口 → http://<公网IP>:8080
+    depends_on: [backend]
+    restart: unless-stopped
+    logging: *default-logging
+
+volumes:
+  # 显式命名：如果两个 compose 文件都用默认命名，卷名会按目录名取，
+  # 生产容器就会挂上本地开发的那份数据。
+  pg_data:
+    name: knowpilot-prod-pg-data
+  storage_data:
+    name: knowpilot-prod-storage
+
+networks:
+  default:
+    name: knowpilot-prod-net
+    driver: bridge
+    driver_opts:
+      # 阿里云 VPC 内 MTU 偏小，保持保守值；若大文件上传慢可试 1500
+      com.docker.network.driver.mtu: 1450

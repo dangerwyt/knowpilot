@@ -143,6 +143,7 @@ ROOT_WHITELIST = {
     ".env.example",      # 模板，只有变量名和 change-me 之类的占位值（C1 保证没有 .env）
     "README.md",
     "docker-compose.yml",
+    "docker-compose.prod.yml",   # 生产部署（2026-09-16 新增）
     "backend",
     "frontend",
     "docs",

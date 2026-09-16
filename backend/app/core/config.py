@@ -20,9 +20,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://knowpilot:change-me@localhost/knowpilot"
     redis_url: str = "redis://localhost:6379/0"
 
-    # Milvus
+    # Milvus —— 本地直连 或 Zilliz Cloud（托管）
+    # 本地 Milvus 未开鉴权：token 留空即可（实测填个错 token 也能连上，会被忽略）
+    # Zilliz Cloud 等托管实例：填控制台给的 "user:password" 或 API Key
     milvus_uri: str = "http://localhost:19530"
     milvus_collection: str = "knowpilot_chunks"
+    milvus_token: str = ""
 
     # JWT
     jwt_secret: str = "change-me"
