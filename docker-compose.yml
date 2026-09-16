@@ -67,7 +67,11 @@ services:
     volumes: [minio_data:/data]
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # 本机直连 PyPI 会被截断，本地 .env 里设成国内源；云端不设即走官方源。
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://knowpilot:${POSTGRES_PASSWORD}@postgres/knowpilot
@@ -82,7 +86,10 @@ services:
       milvus: { condition: service_started }
 
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://knowpilot:${POSTGRES_PASSWORD}@postgres/knowpilot
