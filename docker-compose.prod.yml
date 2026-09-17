@@ -98,7 +98,7 @@ services:
       MILVUS_TOKEN: ${MILVUS_TOKEN:?}
     volumes:
       - storage_data:/app/storage
-    # --pool=solo 是硬约束，不是调优（见 docs/踩坑记录.md #14 与 T100）：多进程 worker 会
+    # --pool=solo 是硬约束，不是调优（T100 实测）：多进程 worker 会
     # 并发消费同一队列，破坏本项目「单 worker 串行」的前提。
     # 别信启动横幅（solo 下照样打 "concurrency: 16"），要看硬证据：
     #   docker top knowpilot-worker   →  celery 进程应为 1 个（prefork 会是 17 个）

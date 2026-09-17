@@ -5,16 +5,38 @@
 
 后端 FastAPI + LangGraph + Milvus + PostgreSQL + Celery + Redis ｜ 前端 Vue 3 + Element Plus + TypeScript
 
-## 文档
+## 核心特性
 
-| 文档 | 内容 |
-|---|---|
-| [项目介绍](docs/项目介绍-知研KnowPilot.md) | 定位 / 核心特性 / 架构图 / 调研链路 / 数据模型 / API 全览（27 个端点） |
-| [能力对比与功能演进建议](docs/能力对比与功能演进建议.md) | 与同类 RAG 项目的能力对比、可加功能优先级、已知问题 |
-| [PRD](docs/PRD-知研-AI研究工作台.md) | 产品需求：用户、场景、功能地图 |
-| [TDD](docs/TDD-知研-技术设计文档.md) | 技术设计：分层、数据模型、关键决策 |
-| [踩坑记录](docs/踩坑记录.md) | 100 条：现象 / 根因 / 修法，按 8 类归档 |
-| [backend/playground](backend/playground/) | 40 个可证伪的验收脚本与探针工具 |
+```
+START → probe → planner → retriever → synthesizer → critic ─┬→ END
+                                        ▲                    │
+                                        └───── rewrite ──────┘
+```
+
+**可量化的质检（不是"感觉还行"）**
+评审模型按 完整度 / 相关度 / 事实性 / 结构规范 **四维各 25 分**打分，通过线 70；
+不通过则把评审意见回灌作者重写（`MAX_RETRIES = 2`）。
+**总分由代码求和，不由模型自报**——避免"四项打对了但总分算错"，模型自报的总分只打日志作对照。
+
+**资料预检：先问"有没有料"再决定怎么写**
+提交后先检索一次（阈值 0.41）拿三态结论 —— 有资料 / 明确没检索到 / 未关联知识库。
+没资料时如实告知（前端弹确认框）而不是硬编；规划阶段**不硬拆**资料未覆盖的章节。
+
+**并发约束下沉到数据库**
+部分唯一索引 `(project_id) WHERE status IN ('pending','running')`，
+把"一个项目同时只能有一个活跃任务"从应用层的"尽量保证"变成数据库层的硬约束——
+根治了双窗口同时提交时"第二个任务卡在 pending 抢不到 worker"。
+
+**SSE 断点续传**
+事件写入 Redis Streams（TTL 600s），前端重连带 `Last-Event-ID` 先重放历史再续接新事件；
+刷新页面 / 断网重连不丢进度。
+
+**四处降级路径 —— 跑不通也是一条路，不是崩**
+质检服务不可用则跳过质检交付并写明原因；单章失败降级占位、其余照常；
+全部章节失败直接置 `failed`，**不交付空报告**。
+
+验收脚本都在 [`backend/playground/`](backend/playground/)：判据建在形态稳定的产物上
+（API 数组长度、事件计数、DB 列），不依赖 LLM 自由文本，且每条都验证过"能 FAIL"。
 
 ## 快速启动
 
@@ -84,9 +106,12 @@ knowpilot/
 │   ├── app/          接口 / 服务 / 模型 / 配置
 │   ├── migrations/   手写 SQL 迁移（每条含回滚段）+ apply.py
 │   └── playground/   验收脚本与探针工具
-├── frontend/         Vue 3 + Element Plus + TypeScript
-└── docs/             PRD / TDD / 项目介绍 / 踩坑记录
+└── frontend/         Vue 3 + Element Plus + TypeScript
 ```
+
+> 内部文档（PRD / TDD / 踩坑记录 / 部署方案）不在本仓库，不随代码公开。
+> 仓库里的 `backend/playground/` 是可直接读的验收脚本 —— 判据怎么写、
+> 怎么保证 PASS 不是恒真，都在里面。
 
 ## 里程碑
 

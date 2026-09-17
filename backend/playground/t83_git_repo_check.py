@@ -7,7 +7,7 @@
   D 组（死引用）：**入库文件里引用的 playground 文件必须都在仓库里**
   C 组（内容卫生）：无 .env、无大文件、无依赖目录、关键业务文件齐全；
                    **源码/脚本里不得有写死的口令字面量**（C7）；
-                   **全部历史提交里都没有敏感文件**（C8）
+                   **全部历史提交里都没有敏感文件**（C8）、**也没有内部文档目录**（C9）
 
 W3 与 C7 是「枚举式判据」的补丁（2026-09-16 加）：
   此前的判据全是「点名检查」—— 只验清单内的东西在不在，清单外的一概不看。
@@ -18,6 +18,15 @@ W3 与 C7 是「枚举式判据」的补丁（2026-09-16 加）：
   C8 是「当前树 vs 历史」的补丁：W3/C1~C7 查的全是**当前树**，把文件删掉就全绿了 ——
   但历史提交里它还在（这正是 #103 的事故形态：文件删了、判据全 PASS、历史里却留着、
   而且已经 push 到公开仓）。C8 遍历全部历史提交的树，口径与 G1/C1/C2/C3 一致。
+
+docs/ 退出版本控制（2026-09-17）：
+  内部文档（PRD / TDD / 踩坑记录 / 部署方案 / 功能演进建议）不再随代码公开 ——
+  其中部署方案含服务器公网 IP、踩坑记录含测试账号邮箱。文件仍在 knowpilot/docs/
+  （本地照常维护），只是 Git 不再看它。三条判据各管一层，缺一不可：
+    G3 —— gitignore 规则本身还有效（规则被改坏时能立刻发现）
+    W4 —— 当前树里确实没有 docs/ 路径
+    C9 —— 全部历史提交里都没有 docs/（重写 / 删库重建之后仍然成立）
+  「整个目录不公开」这件事，不写成判据就等于只靠记忆维持。
 
 D 组是核心判据 —— 仓库里存不存在「叫你去跑一个不存在的文件」的情况。
 只在「会进仓库的文件」里搜引用，因为不入库的文件自己引用不到也不影响别人。
@@ -100,12 +109,26 @@ def g_group() -> None:
         "backend/migrations/0005_t81_drop_chunks.sql",
         "backend/migrations/README.md",
         "backend/playground/schema_drift.py",
-        "docs/PRD-知研-AI研究工作台.md",
         "docker-compose.yml",
     ]
     bad2 = [p for p in must_keep if ignored(p)]
-    check("G2 [反向] 源码/示例配置/文档/白名单工具未被误拦", not bad2,
+    check("G2 [反向] 源码/示例配置/白名单工具未被误拦", not bad2,
           f"共 {len(must_keep)} 项；误拦={bad2 or '无'}")
+
+    # G3 正向：.gitignore 里管 docs/ 的规则还在（2026-09-17 起 docs/ 整体退出版本控制）。
+    # 这里刻意带 --no-index：git check-ignore **默认会参考索引状态** —— 已追踪的文件
+    # 不算「被忽略」（.gitignore 对已追踪文件本来就无效）。不带 --no-index 的话，
+    # 这条会在「忘了 git rm --cached」时 FAIL，与 W4 完全重复。
+    # 带上了，它就只问一件事：**规则本身还在不在**（规则被误删/改坏时立刻发现）。
+    # 实测教训：这行的注释我第一版写反了（以为默认就不看索引），是靠 t83 跑出来的
+    # 结果（G3 与 W4 同时 FAIL）才发现 —— 判据的语义别凭印象写。
+    docs_must_ignore = ["docs/踩坑记录.md", "docs/PRD-知研-AI研究工作台.md"]
+    bad3 = [
+        p for p in docs_must_ignore
+        if subprocess.run(["git", "check-ignore", "-q", "--no-index", p],
+                          cwd=ROOT).returncode != 0
+    ]
+    check("G3 [正向] .gitignore 里 docs/ 的规则仍然有效", not bad3, f"漏网={bad3 or '无'}")
 
 
 # ---------------------------------------------------------------- W 组
@@ -146,7 +169,8 @@ ROOT_WHITELIST = {
     "docker-compose.prod.yml",   # 生产部署（2026-09-16 新增）
     "backend",
     "frontend",
-    "docs",
+    # docs 于 2026-09-17 移出（内部文档不公开）。它已不在仓库里，登记项也就不该留着 ——
+    # 否则 W3b（正向：登记项一个不少）会一直 FAIL，而真正的原因是"清单没跟着改"。
 }
 
 
@@ -172,6 +196,16 @@ def w_group(pending: list[str]) -> None:
           not extra, f"实际 {len(tops)} 项；多出={extra or '无'}")
     missing_top = [t for t in ROOT_WHITELIST if t not in tops]
     check("W3b [正向] 根目录登记项一个不少", not missing_top, f"缺={missing_top or '无'}")
+
+    # W4 反向：当前树里不能有任何 docs/ 路径（2026-09-17 起内部文档整体退出版本控制）。
+    # 与 G3 的分工：G3 查「规则有没有生效」，这条查「实际追踪状态」——
+    # 加了 .gitignore 不会让**已追踪**的文件自动移出索引，万一漏了 git rm --cached，
+    # G3 照样是绿的，只有这条能抓到。
+    docs_tracked = [p for p in pending if p.startswith("docs/")]
+    check("W4 [反向] 当前树里没有 docs/ 路径", not docs_tracked,
+          f"命中={len(docs_tracked)}"
+          + ("" if not docs_tracked
+             else f"：{docs_tracked[:3]}{' …' if len(docs_tracked) > 3 else ''}"))
 
 
 # ---------------------------------------------------------------- D 组
@@ -311,20 +345,39 @@ def c_group(pending: list[str]) -> None:
     # 这条把上面那些「查当前树」的口径延伸到全部历史提交。
     revs = git("rev-list", "--all").split()
     hist_hits: list[str] = []
+    hist_docs: list[str] = []
     hist_paths = 0
     for c in revs:
-        for path in git("ls-tree", "-r", "--name-only", c).split("\n"):
+        # -z 是必需的，不是风格问题：不带它时 git 会给**非 ASCII 文件名**加引号并做
+        # 八进制转义（`"docs/\350\270\251\345\235\221..."`），于是 `startswith("docs/")`
+        # 永远为假 —— 判据变成恒真的假 PASS。C9 第一次跑就是这么「全绿」的
+        #（本仓库 docs/ 里 8 个文件全是中文名，一条都抓不到）。
+        # C8 之前一直带着同一个盲区，只是 _t60_fin.sh 恰好是 ASCII 名才被抓到。
+        for path in git("ls-tree", "-r", "-z", "--name-only", c).split("\0"):
             if not path:
                 continue
             hist_paths += 1
             if HIST_FORBIDDEN_RE.search(path):
                 hist_hits.append(f"{c[:7]}:{path}")
+            if path.startswith("docs/"):
+                hist_docs.append(f"{c[:7]}:{path}")
     shown = sorted(set(hist_hits))
     check(f"C8 [历史] {len(revs)} 个历史提交里都没有敏感文件", not shown,
           f"扫 {hist_paths} 条路径；命中={len(shown)}"
           + ("" if not shown else "\n           "
              + "\n           ".join(shown[:8])
              + (f"\n           …（共 {len(shown)} 条）" if len(shown) > 8 else "")))
+
+    # C9 同样是历史口径，只是问的问题不同 —— 跟 C8 共用这次遍历（省一轮 git 调用）。
+    # 「从当前树删掉」≠「从历史删掉」，这正是 C8 存在的理由，docs 同理。
+    # 清理路径：filter-branch 剔除全部历史 + 远端删库重建 —— 重写只让旧提交「不可达」，
+    # GitHub 服务端 GC 之前仍能按旧 SHA 直连读到内容，删库才是立刻生效的做法。
+    shown_docs = sorted(set(hist_docs))
+    check(f"C9 [历史] {len(revs)} 个历史提交里都没有 docs/", not shown_docs,
+          f"扫 {hist_paths} 条路径；命中={len(shown_docs)}"
+          + ("" if not shown_docs else "\n           "
+             + "\n           ".join(shown_docs[:8])
+             + (f"\n           …（共 {len(shown_docs)} 条）" if len(shown_docs) > 8 else "")))
 
 
 def main() -> int:

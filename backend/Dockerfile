@@ -5,7 +5,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# pip 源可覆盖：本机 Docker 直连 PyPI 时大响应会被截断（见 docs/踩坑记录.md），
+# pip 源可覆盖：本机 Docker 直连 PyPI 时大响应会被中间层截断（实测踩过），
 # 需传国内镜像源；云端不传则用官方源。由 docker-compose.yml 的 build.args 注入。
 ARG PIP_INDEX_URL=https://pypi.org/simple
 
