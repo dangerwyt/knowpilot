@@ -53,7 +53,17 @@ except Exception:
     pass
 
 API = "http://localhost:8000/api/v1"
-EMAIL, PWD = "kptest@example.com", "test123456"
+import os
+
+# 测试账号从环境变量读，别把凭据写进公开仓库
+# （t88/t89a/t89b 三个前端脚本 2026-09-16 已按此整改，后端这几个没跟上）
+EMAIL = os.environ.get("KP_TEST_EMAIL")
+PWD = os.environ.get("KP_TEST_PASSWORD")
+if not (EMAIL and PWD):
+    raise SystemExit(
+        "缺少 KP_TEST_EMAIL / KP_TEST_PASSWORD。用法：\n"
+        "  KP_TEST_EMAIL=<账号> KP_TEST_PASSWORD=<口令> python <本脚本>"
+    )
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 WAIT_LIMIT_S = 600
 POLL_S = 5

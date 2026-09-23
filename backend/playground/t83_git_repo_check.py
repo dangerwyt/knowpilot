@@ -255,14 +255,34 @@ def d_group(pending: list[str]) -> None:
 
 
 # ---------------------------------------------------------------- C 组
-# 硬编码凭据：带引号的字面量赋值（password / secret / api_key / token ...），长度 ≥ 6。
+# 硬编码凭据：把每行按**第一个 `=`** 切成 lhs / rhs —— 只要 **lhs 里出现敏感名**、
+# 且 rhs 里有长度 ≥ 6 的引号字面量，就记为命中。
+# 为什么这样切（2026-09-23 重写，两个方向各栽一次）：
+#   ① 旧版是「敏感名 + `=` + **紧跟的一个**引号串」⇒ 遇到元组赋值
+#      `EMAIL, PWD = "a@example.com", "realpass"`，抓到的永远是 `=` 后**第一个**值（邮箱），
+#      真正的口令被逗号挡住、根本进不了捕获组；而那个邮箱恰好含 `example` ⇒ 又被占位符词表放过
+#      ⇒ 判据报「命中=0」，6 个入库脚本里的明文口令一条都没抓到。
+#   ② 改成「按行扫该行**所有**引号串」又太松：正常业务代码
+#      `http.post('/auth/login', { email, password })` 同时有 `password` 和引号串 ⇒ 假红一片（32 处）。
+#   ⇒ 折中是「只看赋值号**左边**的名字」：敏感名必须出现在**被赋值的变量**里，才可能是凭据。
 # 两个刻意的收窄，都是为了不假红（判据假红几次就没人看了）：
 #   ① 只认**带引号**的值 —— .env / .env.example 的 `JWT_SECRET=change-me` 是裸值，天然不命中；
-#   ② 值命中占位符词表就放过 —— change-me / xxx / ${VAR} / *** 这类都不是真凭据。
-CRED_RE = re.compile(
-    r"(?i)\b(pass(?:word|wd|phrase)?|secret|api[_-]?key|access[_-]?token|auth[_-]?token)"
-    r"\s*[:=]\s*[\"']([^\"'\s]{6,})[\"']"
+#   ② 值命中占位符词表就放过 —— change-me / xxx / ${VAR} / *** 这类都不是真凭据；
+#   ③ `pass` 必须带后缀（password/passwd/passphrase）—— 裸 `PASS = "..."` 是测试脚本里的
+#      通过标记，不是凭据（`eval_retrieval.py:39` 就是这么被误报的）；
+#   ④ 值本身就是「全大写的环境变量名」时放过 —— `PWD = os.environ.get("KP_TEST_PASSWORD")`
+#      是**把口令挪出代码后的正确写法**，不收窄的话整改完反而会被判据报成新违规
+#      （实测：6 个脚本整改完，C7 立刻报 6 条 `PWD（值长度 16）`，那 16 就是 `KP_TEST_PASSWORD`）。
+#      代价：全大写字面量当口令时会漏检 —— 代码里罕见，可接受。
+CRED_NAME_RE = re.compile(
+    r"(?i)\b(pass(?:word|wd|phrase)|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\b"
 )
+CRED_ASSIGN_RE = re.compile(r"^([^=]+)=(.*)$")           # 按第一个 `=` 切：左边是名字
+CRED_VALUE_RE = re.compile(r"[\"']([^\"'\s]{6,})[\"']")   # 右边是候选值
+CRED_COMMENT_RE = re.compile(r"^\s*(#|//|/\*|\*)")        # 注释/文档行整行跳过
+# ⚠️ 不能并进 CRED_PLACEHOLDER_RE —— 那一条带 `(?i)`，加了 `[A-Z0-9_]+` 会大小写不敏感，
+# 于是 `test123456` 这种纯字母数字的值全被放过（真口令一条都抓不到）。
+CRED_ENVNAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")        # 值本身就是「环境变量名」
 CRED_PLACEHOLDER_RE = re.compile(
     r"(?i)change[-_]?me|placeholder|dummy|example|sample|xxx|yyy|your[-_]?|"
     r"<|\$\{|\{\{|[*]{3,}"
@@ -317,7 +337,10 @@ def c_group(pending: list[str]) -> None:
     miss = [p for p in key if p not in pending]
     check("C6 [完整] 关键业务文件一个不少", not miss, f"缺={miss or '无'}")
 
-    # C7 内容兜底：不管文件叫什么名字、放在哪个目录，写死的口令都得被抓出来
+    # C7 内容兜底：不管文件叫什么名字、放在哪个目录，写死的口令都得被抓出来。
+    # 口径见上面 CRED_NAME_RE 那段注释 —— 关键：**只看赋值号左边的名字**，值在 rhs 里找
+    # （这样元组赋值 `a, PWD = "x", "y"` 的第二个值也能抓到，又不会把业务代码里的
+    #  `{ email, password }` 参数当凭据）。
     hits: list[str] = []
     cred_scanned = 0
     for rel in pending:
@@ -331,11 +354,22 @@ def c_group(pending: list[str]) -> None:
         except OSError:
             continue
         cred_scanned += 1
-        for m in CRED_RE.finditer(text):
-            if CRED_PLACEHOLDER_RE.search(m.group(2)):
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if CRED_COMMENT_RE.match(line):
+                continue                                      # 注释里的提及不算写死凭据
+            assign = CRED_ASSIGN_RE.match(line)
+            if not assign:
+                continue                                      # 没有 `=` ⇒ 不是赋值（类型声明/调用）
+            name_m = CRED_NAME_RE.search(assign.group(1))     # 只在赋值号左边找敏感名
+            if not name_m:
                 continue
-            line = text[:m.start()].count("\n") + 1
-            hits.append(f"{rel}:{line} → {m.group(1)}=\"{m.group(2)}\"")
+            for val_m in CRED_VALUE_RE.finditer(assign.group(2)):   # 再在右边找值
+                val = val_m.group(1)
+                if CRED_PLACEHOLDER_RE.search(val) or CRED_ENVNAME_RE.match(val):
+                    continue          # 占位符 / 环境变量名，都不是写死的凭据（见上面 ②④）
+                # ⚠️ 只报「位置 + 变量名 + 值长度」，**绝不打印值本身** ——
+                # 判据的输出会进 CI 日志和终端历史，不能让它自己变成新的泄露面。
+                hits.append(f"{rel}:{lineno} → {name_m.group(1)}（值长度 {len(val_m.group(1))}）")
     check("C7 [卫生] 源码/脚本里没有写死的口令", not hits,
           f"扫 {cred_scanned} 个文件；命中={len(hits)}"
           + ("" if not hits else "\n           " + "\n           ".join(sorted(set(hits)))))
