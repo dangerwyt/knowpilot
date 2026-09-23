@@ -53,9 +53,14 @@ def ensure_collection(collection_name: str | None = None) -> None:
         index_params = client.prepare_index_params()
         index_params.add_index(
             field_name="embedding",
-            index_type="IVF_FLAT",
+            # AUTOINDEX —— 唯一「本地 + Zilliz Cloud 通吃」的选项。
+            # Zilliz Cloud 自助只支持 AUTOINDEX（+ MINHASH_LSH）：IVF_FLAT / HNSW / IVF_PQ / DISKANN
+            # 都要发工单申请 ⇒ 用 IVF_FLAT 生产建表必失败（2026-09-16 查证）。
+            # 本地 Milvus v2.4.6 实测 AUTOINDEX + COSINE 建表/写入/检索/drop 全通 ⇒ 对本地零影响
+            # （且本函数对已存在的 collection 直接 return，本地那份不会重建）。
+            # ⚠️ AUTOINDEX 由服务端自动选索引，**不接受 params** —— 原先的 {"nlist": 1024} 必须删掉。
+            index_type="AUTOINDEX",
             metric_type="COSINE",
-            params={"nlist": 1024},
         )
 
         client.create_collection(
