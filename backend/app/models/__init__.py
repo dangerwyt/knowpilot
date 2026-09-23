@@ -104,7 +104,10 @@ class KnowledgeBase(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, server_default=func.gen_random_uuid())
     org_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("orgs.id"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    embedding_model: Mapped[str] = mapped_column(String, default="BAAI/bge-m3")
+    # ⚠️ 这里只是**新行的默认值**；库里已有行不会被改（改的是代码，不是数据）。
+    # 与 config.settings.embedding_model 保持一致；历史上的默认值是 BAAI/bge-m3，
+    # 那是早期用本地 embedder 时的遗留。
+    embedding_model: Mapped[str] = mapped_column(String, default="qwen3.7-text-embedding")
     chunk_strategy: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -45,7 +45,7 @@ def is_table_sep(s: str) -> bool:
 
     这里刻意用**纯 Python 判断字符**而不是正则 `[|\\-:]+` —— 实测在 git-bash 的
     heredoc 里反斜杠会被静默改写成 `/`，于是正则里的 `\\-` 变成 `/-`，`-` 不在字符集里，
-    分隔行永远匹配不上，而脚本会安安静静地返回"0 张表"（见 docs/踩坑记录.md #108）。
+    分隔行永远匹配不上，而脚本会安安静静地返回"0 张表"。
     """
     s = (s or "").strip()
     return (len(s) >= 3 and s.startswith("|") and s.endswith("|")
