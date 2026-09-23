@@ -14,9 +14,16 @@
 
 用法（在本目录下运行）
 --------------------
-    python check_worker_start.py                # 默认比对 app/services/task_queue.py
-    python check_worker_start.py <源文件路径>     # 比对该文件的 mtime
+    python check_worker_start.py                # 默认比对 app/ 下所有 .py 的**最新** mtime
+    python check_worker_start.py <源文件路径>     # 只比对该文件的 mtime（排查单点时用）
     python check_worker_start.py --selftest      # 判据自检（伪造数据，不碰真实进程）
+
+⚠️ 2026-09-22 又栽一次：默认目标原本只写死 `app/services/task_queue.py` 一个文件。
+   那天改了 `app/services/rag/parsers.py`（15:59:48），worker 还是 13:51:48 启动的
+   —— **跑的是旧代码，本脚本却报 PASS**。
+   「worker 加载的代码是不是最新」问的是**整个 app/**，不是某一个文件：
+   锚点只覆盖一个点，就只能在那个点上为真（技能暗门 12）。
+   现在默认扫全目录取最新 mtime；要查单文件仍可显式传路径。
 
 退出码：0 = worker 比代码新；1 = 旧代码/无法判定（都不该当成通过）。
 """
@@ -29,10 +36,26 @@ from datetime import datetime
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1]
-DEFAULT_TARGET = BACKEND / "app/services/task_queue.py"
+APP_DIR = BACKEND / "app"                                 # 默认扫描范围：整个 app/
 
 # 命令行里同时出现这两个词，才认作本项目的 celery worker
 WORKER_MARKERS = ("celery", "task_queue")
+
+
+def newest_source_mtime(root: Path = APP_DIR) -> tuple[datetime | None, Path | None]:
+    """`app/` 下所有 `.py` 的最新 mtime（返回 (时间, 文件)）。
+
+    只比一个文件会漏 —— 见文件头 2026-09-22 那条。默认目标从「一个文件」改成
+    「整个 app/ 的最新值」，这样改**任何**被 worker 加载的代码都能被发现。
+    """
+    newest, where = None, None
+    for p in root.rglob("*.py"):
+        if "__pycache__" in p.parts:
+            continue
+        t = datetime.fromtimestamp(p.stat().st_mtime)
+        if newest is None or t > newest:
+            newest, where = t, p
+    return newest, where
 
 PS_QUERY = (
     "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
@@ -156,9 +179,39 @@ def selftest() -> int:
         print(f"        期望 {want}，实际 {got}")
         for ln in lines:
             print(f"        {ln}")
+    # 用例 5：锚点覆盖 —— 默认目标必须能发现「app/ 里任意一个被改过的 .py」，
+    #         而不是只认 task_queue.py（2026-09-22 就是在这里假绿的）
+    ok5, msg5 = _selftest_anchor()
+    bad += 0 if ok5 else 1
+    print(f"\n[{'PASS' if ok5 else 'FAIL'}] 用例 5：锚点覆盖（改了 app/ 里任一 .py 都要被发现）")
+    print(f"        {msg5}")
+
     print(f"\n  自检{'全过' if not bad else f'有 {bad} 条不符'}；"
-          f"用例 1 是真实数据、用例 3 是旧判据的漏洞场景。")
+          f"用例 1 是真实数据、用例 3 是旧判据的漏洞场景、用例 5 是锚点覆盖。")
     return 0 if not bad else 1
+
+
+def _selftest_anchor() -> tuple[bool, str]:
+    """造一个临时目录验 `newest_source_mtime`：必须取到**最新**那个文件。
+
+    反例就是被修掉的旧行为 —— 只比单个文件时，改别的文件它毫无反应。
+    """
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "sub").mkdir()
+        old, new = root / "old.py", root / "sub" / "new.py"
+        old.write_text("x", encoding="utf-8")
+        new.write_text("x", encoding="utf-8")
+        base = datetime(2026, 9, 22, 13, 0, 0).timestamp()
+        os.utime(old, (base, base))
+        os.utime(new, (base + 3600, base + 3600))
+        t, p = newest_source_mtime(root)
+        got = None if p is None else p.name
+        return (got == "new.py",
+                f"目录里 old.py(13:00) 与 sub/new.py(14:00) ⇒ 取到 {got}（须为 new.py）")
 
 
 def main() -> int:
@@ -166,15 +219,22 @@ def main() -> int:
         return selftest()
 
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    target = Path(args[0]) if args else DEFAULT_TARGET
-    if not target.is_absolute():
-        target = (BACKEND / target).resolve()
-    if not target.exists():
-        print(f"找不到要比对的源文件：{target}")
-        return 2
+    if args:
+        target = Path(args[0])
+        if not target.is_absolute():
+            target = (BACKEND / target).resolve()
+        if not target.exists():
+            print(f"找不到要比对的源文件：{target}")
+            return 2
+        code_mtime = datetime.fromtimestamp(target.stat().st_mtime)
+        print(f"比对的源文件（显式指定）：{target}")
+    else:
+        code_mtime, target = newest_source_mtime()
+        if code_mtime is None:
+            print(f"在 {APP_DIR} 下没找到 .py ⇒ 无法判定（**不要当成通过**）")
+            return 1
+        print(f"比对的源文件（app/ 下最新的一个）：{target}")
 
-    code_mtime = datetime.fromtimestamp(target.stat().st_mtime)
-    print(f"比对的源文件：{target}")
     print(f"  最后修改：{code_mtime:%Y-%m-%d %H:%M:%S}")
     print(f"  当前时间：{datetime.now():%Y-%m-%d %H:%M:%S}\n")
 
