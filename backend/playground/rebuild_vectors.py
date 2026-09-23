@@ -96,11 +96,13 @@ async def main() -> None:
     print(f"collection 已重建：{client.has_collection(st.milvus_collection)}")
 
     print("-" * 68)
-    expect: dict[str, int] = {}
+    # did[:8] -> (期望代次, 期望块数)。块数取 reingest_text 的返回值 —— collection 刚重建、
+    # 库里没有旧代次，此刻 query 回查到的行数就是该文档的真实块数。
+    expect: dict[str, tuple[int, int]] = {}
     for did, kb, name, content, ep, _cc in docs:
         did, kb, ep = str(did), str(kb), int(ep or 1)
         n = reingest_text(kb, did, content, {"file_name": name, "epoch": ep})
-        expect[did[:8]] = ep
+        expect[did[:8]] = (ep, n)
         async with SessionLocal() as session:
             await session.execute(
                 text("update documents set chunk_count=:n where id=:i"), {"n": n, "i": did}
@@ -118,9 +120,12 @@ async def main() -> None:
         for did, v in snap.items():
             eps = {e for _, e in v}
             want = expect.get(did)
-            good = len(v) == 1 and eps == {want}
+            # ⚠️ 不要写成 `len(v) == 1` —— 那是「演示文档整篇只切 1 块」时代的假设。
+            # 真实文档有几十块，这条判据会**恒假**，把干净的数据全报成残留（2026-09-18 实踩）。
+            good = want is not None and len(v) == want[1] and eps == {want[0]}
             ok &= good
-            print(f"  {did}: {len(v)} 行 epoch={sorted(eps, key=str)}  {'✅' if good else '❌ 期望 1 行 epoch=' + str(want)}")
+            print(f"  {did}: {len(v)} 行 epoch={sorted(eps, key=str)}  "
+                  f"{'✅' if good else '❌ 期望 %s 行 epoch=%s' % (want[1] if want else '?', want[0] if want else '?')}")
         if set(snap.keys()) != set(expect.keys()):
             ok = False
             print(f"  ❌ 文档集合不一致：仅 Milvus {set(snap)-set(expect)}｜仅 PG {set(expect)-set(snap)}")
