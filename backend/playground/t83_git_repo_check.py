@@ -156,6 +156,7 @@ WHITELIST = [
     "backend/playground/t99_fixes_test.py",
     "backend/playground/t99_frontend_icon_test.js",
     "backend/playground/t100_compose_worker_test.py",
+    "backend/playground/eval_retrieval.py",
 ]
 
 

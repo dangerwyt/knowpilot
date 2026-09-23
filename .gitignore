@@ -106,6 +106,12 @@ backend/playground/*
 !backend/playground/t99_frontend_icon_test.js
 # T100 验收：compose 的 worker 必须 --pool=solo（配置层 + 自检 + 容器层实测）
 !backend/playground/t100_compose_worker_test.py
+# 检索质量评测：hit@3 / hit@5 + 期望文档名次（评测集 eval_set.jsonl 与结果 eval_runs/ 属本地数据，不入库）
+!backend/playground/eval_retrieval.py
+# PDF 解析噪声量化：页眉/页码/目录三条计数（PDF 原件的验收基线）
+!backend/playground/pdf_noise_check.py
+# PDF 清洗离线 A/B：清洗前后块数/噪声/正文锚点对比（带 --selftest，接 parsers.py 前先跑它）
+!backend/playground/pdf_clean_ab.py
 
 # 迁移执行记录（记录的是「这个库跑过什么」，属本地状态）
 backend/migrations/APPLIED.log
