@@ -112,6 +112,8 @@ backend/playground/*
 !backend/playground/pdf_noise_check.py
 # PDF 清洗离线 A/B：清洗前后块数/噪声/正文锚点对比（带 --selftest，接 parsers.py 前先跑它）
 !backend/playground/pdf_clean_ab.py
+# 向量库预检：对当前配置指向的 Milvus/Zilliz 跑建表→写入→检索→删除（只在临时集合上做，跑完即 drop）
+!backend/playground/zilliz_smoke_test.py
 
 # 迁移执行记录（记录的是「这个库跑过什么」，属本地状态）
 backend/migrations/APPLIED.log
