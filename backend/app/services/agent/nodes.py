@@ -143,7 +143,7 @@ def probe(state: ResearchState) -> dict:
         state.get("ready_doc_ids"), state.get("ready_doc_epochs"),
     )
     if has_material is None:
-        return {"kb_overview": overview}          # 降级：不带 has_material，保住三态的 None
+        return {"kb_overview": overview}  # 降级：不带 has_material，保住三态的 None
     return {"kb_overview": overview, "has_material": has_material, "material_count": count}
 
 
@@ -195,7 +195,7 @@ def retriever(state: ResearchState) -> dict:
     evidence = []
     for plan in plans:
         vector = embedder.embed_query(plan)
-        hits = search(vector, kb_ids, top_k=3, document_ids=state.get("ready_doc_ids"),
+        hits = search(vector, kb_ids, top_k=6, document_ids=state.get("ready_doc_ids"),
                       epochs=state.get("ready_doc_epochs"))
         evidence.append({
             "question": plan,
@@ -204,6 +204,14 @@ def retriever(state: ResearchState) -> dict:
     return {
         "evidence": evidence,
     }
+
+
+def _tier(d: float | None) -> str:
+    """按 COSINE 相似度给资料分档，供 prompt 标注可信度。
+    档位来自实测：61 条「语料里有答案」的样本 top1 最低 0.5333
+    ⇒ 低档下界取 0.50 保证不误标；0.60 为高档线（暂定）。
+    """
+    return "高" if (d or 0) >= 0.60 else "中" if (d or 0) >= 0.50 else "低"
 
 
 async def synthesizer(state: ResearchState) -> dict:
@@ -220,6 +228,8 @@ async def synthesizer(state: ResearchState) -> dict:
             写作规则（必须遵守）：
             1. 【照资料写】只能基于下方内部资料撰写，禁止编造资料中不存在的数据、数字、结论。
                每个关键论断都必须在资料中有对应内容支撑；资料不足时明确写"该细节资料未覆盖"。
+               1.1 【分档】资料前缀标有相关度。「低」档资料只能用于背景铺垫，
+               不得据此写出具体数字、配置值或结论；资料不足时按规则 1 写"该细节资料未覆盖"。
             2. 【事实性】不得虚构市场数据、客户案例、产品功能。
             3. 【简洁】紧扣章节主题，避免与其它章节重复表述。
             4. 【无标题】content 只写正文内容，不要以"## 标题"开头或包含章节标题——标题由系统在章节顶部单独展示。
@@ -236,7 +246,10 @@ async def synthesizer(state: ResearchState) -> dict:
     async def write_section(idx: int, plan: str, focus: str) -> tuple[int, SectionContent | None, Exception | None]:
         """单章写作：内部重试，绝不 raise——最终失败降级返回 (idx, None, err)，由调用方统一处理。"""
         related = next((e["hits"] for e in evidence if e["question"] == plan), [])
-        context = "\n".join(f"[资料{i + 1}] {h['content']}" for i, h in enumerate(related))
+        context = "\n".join(
+            f"[资料{i + 1}｜相关度{_tier(h.get('distance'))}] {h['content']}"
+            for i, h in enumerate(related)
+        )
         feedback_section = (
             "【评审意见（必须逐条修正，否则报告不合格）】\n" + feedback
             if feedback
@@ -305,11 +318,22 @@ async def synthesizer(state: ResearchState) -> dict:
 
     evidence_used = []
 
+    # C1+C3：只收「中/高」档 hit（低档只配进正文做背景，不算依据），
+    # 且 document_id 与 snippet 绑在同一条记录里。
+    # 旧写法是两个平行列表 + 落库端恒取 snippets[0]，导致同一章所有引用共用一段摘要、
+    # 与标称文档无关。配对后「摘要对不上文档」在结构上不可能出现。
     for plan in plans:
         related = next((e["hits"] for e in evidence if e["question"] == plan), [])
-        docs = list({h["document_id"] for h in related if h.get("document_id")})
-        snippets = [h["content"][:200] for h in related]
-        evidence_used.append({"section_id": plan, "document_ids": docs, "snippets": snippets})
+        kept = [h for h in related if _tier(h.get("distance")) != "低"]
+        docs: list[dict] = []
+        seen: set[str] = set()
+        for h in kept:
+            doc_id = h.get("document_id")
+            if not doc_id or doc_id in seen:
+                continue  # 同一文档在该章只出一条引用，保留首次出现的那段摘要
+            seen.add(doc_id)
+            docs.append({"document_id": doc_id, "snippet": (h.get("content") or "")[:200]})
+        evidence_used.append({"section_id": plan, "documents": docs})
 
     draft = {"title": objective, "sections": sections}
     if errors:

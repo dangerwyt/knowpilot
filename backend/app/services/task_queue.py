@@ -226,7 +226,7 @@ async def _run(task_id: str) -> None:
             session.add(report)
             await session.flush()  # 先拿 report.id（INSERT ... RETURNING），不提交
 
-            all_doc_ids = {d for sec in evidence_used for d in sec["document_ids"]}  # 全部被引用文档
+            all_doc_ids = {d["document_id"] for sec in evidence_used for d in sec["documents"]}  # 全部被引用文档
 
             if all_doc_ids:
                 # kb_id 必须跟着文档一起查出来，不能想当然写 kb_ids[0]：
@@ -239,13 +239,14 @@ async def _run(task_id: str) -> None:
                 title_map = {r[0]: r[1] for r in doc_rows}
                 kb_map = {r[0]: r[2] for r in doc_rows}
                 for evidence in evidence_used:
-                    for doc_id in evidence["document_ids"]:
+                    for doc in evidence["documents"]:
+                        doc_id = doc["document_id"]
                         session.add(Citation(
                             report_id=report.id,
                             section_id=evidence["section_id"],
                             source_type="kb",
                             source_title=title_map.get(doc_id, str(doc_id)),
-                            snippet=evidence["snippets"][0][:200] if evidence["snippets"] else None,
+                            snippet=doc.get("snippet") or None,  # 与 doc_id 同源的摘要，不再共用 snippets[0]
                             kb_id=kb_map.get(doc_id),
                             document_id=doc_id,
                         ))

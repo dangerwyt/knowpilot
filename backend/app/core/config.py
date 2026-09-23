@@ -13,8 +13,11 @@ class Settings(BaseSettings):
     debug: bool = True
     quality_pass_score: int = 70
     # probe 资料相关性阈值（Milvus COSINE 相似度）
-    # 实测：真相关 top1 ≥ 0.4591，真无关 top1 ≤ 0.3643 → 取中点
-    probe_min_score: float = 0.41
+    # ⚠️ 单一阈值无解：S8 切分后正负例的 top1 分布**重叠**（见 docs/踩坑记录.md #110 / #114）。
+    #    0.41 偏松（12 条负例过线 8 条）；抬到 0.50 是零代价改善 —— 实测正例 top1 最低
+    #    0.5333 ⇒ 假 False 恒为 0，负例过线数 8/12 → 4/12。
+    #    但**仍未重新标定**，属已知短板。
+    probe_min_score: float = 0.50
 
     # 数据库与中间件
     database_url: str = "postgresql+asyncpg://knowpilot:change-me@localhost/knowpilot"

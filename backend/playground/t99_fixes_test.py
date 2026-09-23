@@ -180,6 +180,11 @@ async def group_c() -> None:
     from uuid import uuid4
 
     async with SessionLocal() as s:
+        # C3 基线：库里可能已有真实任务（历史手工测试 / 端到端冒烟），
+        # 不能假设空库 —— 写死 (0,0,0) 会让判据在正常库上恒红（2026-09-22 实测）。
+        baseline = tuple((await s.execute(sql_text(
+            "SELECT (SELECT count(*) FROM tasks), (SELECT count(*) FROM reports), (SELECT count(*) FROM citations)"
+        ))).one())
         kbs = (await s.scalars(select(KnowledgeBase).order_by(KnowledgeBase.created_at))).all()
         if len(kbs) < 2:
             check("C2", False, f"需要至少 2 个知识库才能构造跨库场景，当前 {len(kbs)} 个")
@@ -221,8 +226,10 @@ async def group_c() -> None:
                     "draft": {"title": "t", "sections": [{"title": "第一章", "content": "正文"}]},
                     "evidence_used": [{
                         "section_id": "第一章",
-                        "document_ids": [doc_a.id, doc_b.id],
-                        "snippets": ["片段A", "片段B"],
+                        "documents": [
+                            {"document_id": doc_a.id, "snippet": "片段A"},
+                            {"document_id": doc_b.id, "snippet": "片段B"},
+                        ],
                     }],
                 }
             }
@@ -268,7 +275,7 @@ async def group_c() -> None:
         kbn = (await s.execute(sql_text("SELECT count(*) FROM knowledge_bases"))).scalar()
         docn = (await s.execute(sql_text("SELECT count(*) FROM documents"))).scalar()
 
-    check("C3", left == (0, 0, 0), f"清理后 tasks/reports/citations = {tuple(left)}")
+    check("C3", left == baseline, f"清理后回到基线 {tuple(baseline)}（实际 {tuple(left)}）")
     check("C4", kbn >= 2 and docn >= 2, f"清理没误伤：knowledge_bases={kbn} documents={docn}")
 
 
