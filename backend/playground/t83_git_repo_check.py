@@ -414,6 +414,37 @@ def c_group(pending: list[str]) -> None:
              + "\n           ".join(shown_docs[:8])
              + (f"\n           …（共 {len(shown_docs)} 条）" if len(shown_docs) > 8 else "")))
 
+    # C10 [一致性] .env.example 的每个键都能在 config.py 里找到对应字段。
+    # 为什么需要：SettingsConfigDict(extra="ignore") 会让「名字写错」**静默失效** ——
+    # 变量名连字段都没有时，写进 .env 等于没写，且一声不吭（2026-09-23 实踩：
+    # 模板里写的 DEEPSEEK_SYNTH_MODEL，真字段叫 deepseek_review_model，配了等于没配；
+    # 同一份 .env 里 EMBEDDING_MODEL=BAAI/bge-m3 也是旧值，都因为「模板无人校验」而长期存在）。
+    # 只判这一个方向：反方向（有字段但模板没列）**故意不判** ——
+    #   app_name / debug / probe_min_score 这类有合理默认值的调优参数不需要部署者配，
+    #   逼它们全列进模板只会让模板变臃肿，属于「为判据而判据」。
+    # 静态解析而不是 import app.core.config：t83 是仓库体检脚本，
+    # 不该因为「后端依赖没装」就跑不起来（克隆下来只装 git 也要能跑）。
+    env_example = ROOT / ".env.example"
+    if not env_example.is_file():
+        check_skip("C10 [一致性] .env.example 的键都能对应到 config.py 字段", "模板文件不存在")
+    else:
+        cfg_text = (ROOT / "backend/app/core/config.py").read_text(encoding="utf-8", errors="replace")
+        cfg_fields = {m.group(1).lower()
+                      for m in re.finditer(r"^\s{4}([a-z_][a-z0-9_]*)\s*:", cfg_text, re.M)}
+        tmpl_text = env_example.read_text(encoding="utf-8", errors="replace")
+        tmpl_keys = [m.group(1) for m in re.finditer(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=", tmpl_text, re.M)]
+        # compose 层变量：由 docker-compose 消费（变量插值 / build.args / 容器环境），
+        # 本来就不该有 config 字段 ⇒ 不算缺陷。但必须**显式登记**，
+        # 否则白名单会退化成「凡是报错的都加进去」的万能挡箭牌。
+        compose_only = {"postgres_password", "pip_index_url"}
+        unknown = sorted(k for k in {k.lower() for k in tmpl_keys}
+                         if k not in cfg_fields and k not in compose_only)
+        check(f"C10 [一致性] .env.example 的 {len(tmpl_keys)} 个键都能对应到 config.py 字段",
+              not unknown,
+              f"config 字段 {len(cfg_fields)} 个；无法对应={unknown or '无'}"
+              + ("\n           ⚠️ 写进 .env 会被 extra='ignore' 静默忽略（配了等于没配）"
+                 if unknown else ""))
+
 
 def main() -> int:
     print(f"仓库根：{ROOT}")
