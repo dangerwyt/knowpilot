@@ -114,6 +114,8 @@ backend/playground/*
 !backend/playground/pdf_clean_ab.py
 # 向量库预检：对当前配置指向的 Milvus/Zilliz 跑建表→写入→检索→删除（只在临时集合上做，跑完即 drop）
 !backend/playground/zilliz_smoke_test.py
+# 自助注册开关验收：默认必须为开（本地脚本依赖它）+ 环境变量 "false" 的布尔解析 + 关闭后返回 403
+!backend/playground/t116_register_switch_check.py
 
 # 迁移执行记录（记录的是「这个库跑过什么」，属本地状态）
 backend/migrations/APPLIED.log

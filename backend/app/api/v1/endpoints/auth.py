@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import create_token, get_current_user
+from app.core.config import settings
 from app.core.db import get_db
 from app.models import Org, User
 from app.schemas import LoginIn, RegisterIn, TokenOut, UserOut
@@ -20,6 +21,9 @@ def _user_out(user: User) -> UserOut:
 
 @router.post("/register", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterIn, db: AsyncSession = Depends(get_db)):
+    # 上线后可关：settings.allow_registration=false ⇒ 自助注册关闭（已有账号登录不受影响）
+    if not settings.allow_registration:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "注册已关闭")
     exists = await db.scalar(select(User).where(User.email == body.email))
     if exists:
         raise HTTPException(status.HTTP_409_CONFLICT, "邮箱已注册")

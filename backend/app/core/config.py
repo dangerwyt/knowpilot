@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # JWT
     jwt_secret: str = "change-me"
     jwt_expire_minutes: int = 60 * 24 * 7
+    # 是否开放自助注册：True = 任何人可调 POST /auth/register。
+    #   线上建议设 false —— 否则一旦公网可达，陌生人就能注册并消耗 LLM 额度。
+    #   本地保持 True —— playground 的前端测试脚本（t88/t89a/t89b）靠它自建测试账号。
+    allow_registration: bool = True
 
     # LLM（DeepSeek，模型分级）
     deepseek_api_key: str = ""
